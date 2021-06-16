@@ -3,6 +3,9 @@
 
 const url = require('url');
 const path = require('path');
+const dotenv = require('dotenv').config({
+    path: (path.resolve(__dirname, '..'), '.env')
+});
 const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const ExtractTextPlugin = require('extract-text-webpack-plugin');
@@ -49,6 +52,10 @@ module.exports = {
         .concat([
             // Clear out build folder
             new CleanWebpackPlugin(['build'], { root: path.join(__dirname, '../') }),
+
+            new webpack.DefinePlugin({
+                'process.env': dotenv.parsed
+            }),
 
             new webpack.DefinePlugin({
                 __DEV__: false,
