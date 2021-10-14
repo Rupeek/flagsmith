@@ -6,6 +6,7 @@ import pytest
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.test import override_settings
 from django.urls import reverse
 from pytz import UTC
 from rest_framework import status
@@ -17,7 +18,7 @@ from organisations.invites.models import Invite
 from organisations.models import Organisation, OrganisationRole, Subscription
 from projects.models import Project
 from segments.models import Segment
-from users.models import FFAdminUser
+from users.models import FFAdminUser, UserPermissionGroup
 from util.tests import Helper
 
 User = get_user_model()
@@ -50,8 +51,12 @@ class OrganisationTestCase(TestCase):
         org_data = response_json["results"][0]
         assert "persist_trait_data" in org_data
 
-    def test_should_create_new_organisation(self):
+    def test_non_superuser_can_create_new_organisation_by_default(self):
         # Given
+        user = User.objects.create(email="test@example.com")
+        client = APIClient()
+        client.force_authenticate(user=user)
+
         org_name = "Test create org"
         webhook_notification_email = "test@email.com"
         url = reverse("api-v1:organisations:organisation-list")
@@ -61,7 +66,7 @@ class OrganisationTestCase(TestCase):
         }
 
         # When
-        response = self.client.post(url, data=data)
+        response = client.post(url, data=data)
 
         # Then
         assert response.status_code == status.HTTP_201_CREATED
@@ -70,7 +75,29 @@ class OrganisationTestCase(TestCase):
             == webhook_notification_email
         )
 
-    def test_should_update_organisation_name(self):
+    @override_settings(RESTRICT_ORG_CREATE_TO_SUPERUSERS=True)
+    def test_create_new_orgnisation_returns_403_with_non_superuser(self):
+        # Given
+        user = User.objects.create(email="test@example.com")
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        org_name = "Test create org"
+        url = reverse("api-v1:organisations:organisation-list")
+        data = {
+            "name": org_name,
+        }
+
+        # When
+        response = client.post(url, data=data)
+        # Then
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert (
+            "You do not have permission to perform this action."
+            == response.json()["detail"]
+        )
+
+    def test_should_update_organisation_data(self):
         # Given
         original_organisation_name = "test org"
         new_organisation_name = "new test org"
@@ -79,7 +106,7 @@ class OrganisationTestCase(TestCase):
         url = reverse(
             "api-v1:organisations:organisation-detail", args=[organisation.pk]
         )
-        data = {"name": new_organisation_name}
+        data = {"name": new_organisation_name, "restrict_project_create_to_admin": True}
 
         # When
         response = self.client.put(url, data=data)
@@ -88,6 +115,7 @@ class OrganisationTestCase(TestCase):
         organisation.refresh_from_db()
         assert response.status_code == status.HTTP_200_OK
         assert organisation.name == new_organisation_name
+        assert organisation.restrict_project_create_to_admin == True
 
     @override_settings()
     def test_should_invite_users(self):
@@ -173,14 +201,18 @@ class OrganisationTestCase(TestCase):
         assert invite_list_response.status_code == status.HTTP_200_OK
         assert invite_resend_response.status_code == status.HTTP_200_OK
 
-    def test_can_remove_a_user_from_an_organisation(self):
+    def test_remove_user_from_an_organisation_also_removes_from_group(self):
         # Given
         organisation = Organisation.objects.create(name="Test org")
+        group = UserPermissionGroup.objects.create(
+            name="Test Group", organisation=organisation
+        )
         self.user.add_organisation(organisation, OrganisationRole.ADMIN)
-
         user_2 = FFAdminUser.objects.create(email="test@example.com")
         user_2.add_organisation(organisation)
-
+        # Add users to the group
+        group.users.add(user_2)
+        group.users.add(self.user)
         url = reverse(
             "api-v1:organisations:organisation-remove-users", args=[organisation.pk]
         )
@@ -195,6 +227,9 @@ class OrganisationTestCase(TestCase):
         # Then
         assert res.status_code == status.HTTP_200_OK
         assert organisation not in user_2.organisations.all()
+        assert group not in user_2.permission_groups.all()
+        # Test that other users are still part of the group
+        assert group in self.user.permission_groups.all()
 
     @override_settings()
     def test_can_invite_user_as_admin(self):

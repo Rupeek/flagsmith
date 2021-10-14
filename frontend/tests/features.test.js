@@ -42,14 +42,13 @@ module.exports = {
     },
     '[Features Tests] - Change feature value to number': function (browser) {
         browser
+            .refresh()
+            .pause(5000)
             .waitAndClick(byId('feature-item-1'))
             .waitForElementPresent('#create-feature-modal')
-            .waitForElementVisible(byId('featureValue'))
-            .pause(200)
-            .clearValue(byId('featureValue'))
-            .pause(50)
-            .setValue(byId('featureValue'), '12')
-            .pause(50)
+            .pause(500)
+            .waitAndSet(byId('featureValue'), '12')
+            .pause(500)
             .click('#update-feature-btn')
             .waitForElementNotPresent('#create-feature-modal')
             .waitForElementVisible(byId('feature-value-1'))
@@ -85,13 +84,8 @@ module.exports = {
         browser
             .waitAndClick(byId('feature-item-1'))
             .waitForElementPresent('#create-feature-modal')
-            .waitForElementVisible(byId('featureValue'))
-            .pause(200)
-            .clearValue(byId('featureValue'))
-            .pause(50)
-            .setValue(byId('featureValue'), 'false')
-            .pause(50)
-            .click('#update-feature-btn')
+            .waitAndSet(byId('featureValue'), 'false')
+            .waitAndClick('#update-feature-btn')
             .waitForElementNotPresent('#create-feature-modal')
             .waitForElementVisible(byId('feature-value-1'))
             .expect.element(byId('feature-value-1')).text.to.equal('false');

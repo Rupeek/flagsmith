@@ -30,7 +30,7 @@ const controller = {
         store.loading();
         API.trackEvent(Constants.events.OAUTH(type));
 
-        data.post(`${Project.api}auth/oauth/${type}/`, _data)
+        data.post(type === 'saml' ? `${Project.api}auth/saml/login/` : `${Project.api}auth/oauth/${type}/`, _data)
             .then((res) => {
                 // const isDemo = email == Project.demoAccount.email;
                 // store.isDemo = isDemo;
@@ -247,7 +247,7 @@ const controller = {
             store.organisation = user && user.organisations && user.organisations[0];
 
 
-            if (Project.delighted) {
+            if (projectOverrides.delighted) {
                 delighted.survey({
                     email: store.model.email, // customer email (optional)
                     name: `${store.model.first_name} ${store.model.last_name}`, // customer name (optional)
