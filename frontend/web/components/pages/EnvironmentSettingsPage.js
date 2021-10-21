@@ -169,7 +169,14 @@ const EnvironmentSettingsPage = class extends Component {
                                             </FormGroup>
                                         </div>
                                         <FormGroup className="mt-1">
-                                            <EditPermissions tabClassName="flat-panel" id={this.props.match.params.environmentId} level="environment"/>
+                                            <EditPermissions
+                                              tabClassName="flat-panel"
+                                              parentId={this.props.match.params.projectId}
+                                              parentLevel="project"
+                                              parentSettingsLink={`/project/${this.props.match.params.projectId}/settings`}
+                                              id={this.props.match.params.environmentId}
+                                              level="environment"
+                                            />
                                         </FormGroup>
                                         <FormGroup className="m-y-3">
                                             <Row className="mb-3" space>
@@ -178,7 +185,7 @@ const EnvironmentSettingsPage = class extends Component {
                                                     <p>
                                                             Feature webhooks let you know when features have changed. You can configure 1 or more Feature Webhooks per Environment.
                                                         {' '}
-                                                        <ButtonLink href="https://docs.flagsmith.com/system-administration/">Learn about feature webhooks.</ButtonLink>
+                                                        <ButtonLink href="https://docs.flagsmith.com/advanced-use/system-administration#web-hooks" target="_blank">Learn about Feature Webhooks.</ButtonLink>
                                                     </p>
                                                 </div>
                                                 <div className="col-md-4 pr-0">

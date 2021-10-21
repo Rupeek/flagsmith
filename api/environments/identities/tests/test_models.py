@@ -3,8 +3,13 @@ from django.test import TransactionTestCase
 from environments.identities.models import Identity
 from environments.identities.traits.models import Trait
 from environments.models import FLOAT, Environment
-from features.models import Feature, FeatureSegment, FeatureState, FeatureStateValue
-from features.value_types import INTEGER, STRING, BOOLEAN
+from features.models import (
+    Feature,
+    FeatureSegment,
+    FeatureState,
+    FeatureStateValue,
+)
+from features.value_types import BOOLEAN, INTEGER, STRING
 from organisations.models import Organisation
 from projects.models import Project
 from segments.models import (
@@ -187,7 +192,7 @@ class IdentityTestCase(TransactionTestCase):
         identity = Identity.objects.create(
             identifier="test-identifier", environment=self.environment
         )
-        trait = Trait.objects.create(
+        Trait.objects.create(
             trait_key="test-key", string_value="testing trait", identity=identity
         )
 
@@ -548,7 +553,7 @@ class IdentityTestCase(TransactionTestCase):
         segment_rule = SegmentRule.objects.create(
             segment=segment, type=SegmentRule.ALL_RULE
         )
-        condition = Condition.objects.create(
+        Condition.objects.create(
             rule=segment_rule,
             operator=GREATER_THAN,
             value="5",
@@ -667,6 +672,7 @@ class IdentityTestCase(TransactionTestCase):
         identity = Identity.objects.create(
             identifier="identifier", environment=self.environment
         )
+
         trait_data_items = [
             generate_trait_data_item("string_trait", "string_value"),
             generate_trait_data_item("integer_trait", 1),
@@ -702,7 +708,7 @@ class IdentityTestCase(TransactionTestCase):
         trait_2_key = "trait_2"
         trait_2_value = 2
         trait_1 = create_trait_for_identity(identity, trait_1_key, trait_1_value)
-        trait_2 = create_trait_for_identity(identity, trait_2_key, trait_2_value)
+        create_trait_for_identity(identity, trait_2_key, trait_2_value)
 
         # and a list of trait data items that should end up creating 1 additional
         # trait, updating 1 and leaving another alone but returning it as it is

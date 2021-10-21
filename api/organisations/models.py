@@ -34,6 +34,7 @@ class Organisation(models.Model):
         default=False,
         help_text="Enable this to cease serving flags for this " "organisation.",
     )
+    restrict_project_create_to_admin = models.BooleanField(default=False)
     persist_trait_data = models.BooleanField(
         default=settings.DEFAULT_ORG_STORE_TRAITS_VALUE,
         help_text="Disable this if you don't want Flagsmith "
@@ -66,9 +67,10 @@ class Organisation(models.Model):
         return hasattr(self, "subscription")
 
     def over_plan_seats_limit(self):
-        return (
-            self.has_subscription() and 0 < self.subscription.max_seats < self.num_seats
-        )
+        if self.has_subscription():
+            return self.num_seats > self.subscription.max_seats
+
+        return self.num_seats > Subscription.MAX_SEATS_IN_FREE_PLAN
 
     def reset_alert_status(self):
         self.alerted_over_plan_limit = False
@@ -89,6 +91,8 @@ class UserOrganisation(models.Model):
 
 
 class Subscription(models.Model):
+    MAX_SEATS_IN_FREE_PLAN = 1
+
     organisation = models.OneToOneField(
         Organisation, on_delete=models.CASCADE, related_name="subscription"
     )
@@ -98,6 +102,19 @@ class Subscription(models.Model):
     max_seats = models.IntegerField(default=1)
     cancellation_date = models.DateTimeField(blank=True, null=True)
     customer_id = models.CharField(max_length=100, blank=True, null=True)
+
+    CHARGEBEE = "CHARGEBEE"
+    XERO = "XERO"
+    PAYMENT_METHODS = [
+        (CHARGEBEE, "Chargebee"),
+        (XERO, "Xero"),
+    ]
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PAYMENT_METHODS,
+        default=CHARGEBEE,
+    )
+    notes = models.CharField(max_length=500, blank=True, null=True)
 
     def update_plan(self, plan_id):
         self.cancellation_date = None
