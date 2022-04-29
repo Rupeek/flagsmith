@@ -1,7 +1,9 @@
 from __future__ import unicode_literals
 
+import datetime
 import logging
 import typing
+from copy import deepcopy
 
 from django.core.exceptions import (
     NON_FIELD_ERRORS,
@@ -9,28 +11,22 @@ from django.core.exceptions import (
     ValidationError,
 )
 from django.db import models
-from django.db.models import Q, UniqueConstraint
-from django.utils.encoding import python_2_unicode_compatible
+from django.db.models import Max, Q, QuerySet
+from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
-from django_lifecycle import (
-    AFTER_CREATE,
-    AFTER_SAVE,
-    BEFORE_CREATE,
-    LifecycleModel,
-    hook,
-)
+from django_lifecycle import AFTER_CREATE, BEFORE_CREATE, LifecycleModel, hook
 from ordered_model.models import OrderedModelBase
 from simple_history.models import HistoricalRecords
 
 from environments.identities.helpers import (
     get_hashed_percentage_for_object_ids,
 )
+from features.constants import ENVIRONMENT, FEATURE_SEGMENT, IDENTITY
 from features.custom_lifecycle import CustomLifecycleModelMixin
 from features.feature_states.models import AbstractBaseFeatureValueModel
 from features.feature_types import MULTIVARIATE
 from features.helpers import get_correctly_typed_value
 from features.multivariate.models import MultivariateFeatureStateValue
-from features.tasks import trigger_feature_state_change_webhooks
 from features.utils import (
     get_boolean_from_string,
     get_integer_from_string,
@@ -49,9 +45,9 @@ logger = logging.getLogger(__name__)
 
 if typing.TYPE_CHECKING:
     from environments.identities.models import Identity
+    from environments.models import Environment
 
 
-@python_2_unicode_compatible
 class Feature(CustomLifecycleModelMixin, models.Model):
     name = models.CharField(max_length=2000)
     created_date = models.DateTimeField("DateCreated", auto_now_add=True)
@@ -66,16 +62,23 @@ class Feature(CustomLifecycleModelMixin, models.Model):
         ),
         on_delete=models.CASCADE,
     )
-    initial_value = models.CharField(max_length=20000, null=True, default=None)
+    initial_value = models.CharField(
+        max_length=20000, null=True, default=None, blank=True
+    )
     description = models.TextField(null=True, blank=True)
     default_enabled = models.BooleanField(default=False)
     type = models.CharField(max_length=50, null=True, blank=True)
     history = HistoricalRecords()
     tags = models.ManyToManyField(Tag, blank=True)
+    is_archived = models.BooleanField(default=False)
+    owners = models.ManyToManyField(
+        "users.FFAdminUser", related_name="owned_features", blank=True
+    )
 
     class Meta:
         # Note: uniqueness is changed to reference lowercase name in explicit SQL in the migrations
         unique_together = ("name", "project")
+        ordering = ("id",)  # explicit ordering to prevent pagination warnings
 
     @hook(AFTER_CREATE)
     def create_feature_states(self):
@@ -127,7 +130,6 @@ def get_next_segment_priority(feature):
         return feature_segments.first().priority + 1
 
 
-@python_2_unicode_compatible
 class FeatureSegment(OrderedModelBase):
     feature = models.ForeignKey(
         Feature, on_delete=models.CASCADE, related_name="feature_segments"
@@ -182,10 +184,6 @@ class FeatureSegment(OrderedModelBase):
             + str(self.priority)
         )
 
-    # noinspection PyTypeChecker
-    def get_value(self):
-        return get_correctly_typed_value(self.value_type, self.value)
-
     def __lt__(self, other):
         """
         Kind of counter intuitive but since priority 1 is highest, we want to check if priority is GREATER than the
@@ -193,12 +191,23 @@ class FeatureSegment(OrderedModelBase):
         """
         return other and self.priority > other.priority
 
+    def clone(self, environment: "Environment") -> "FeatureSegment":
+        clone = deepcopy(self)
+        clone.id = None
+        clone.environment = environment
+        clone.save()
+        return clone
 
-@python_2_unicode_compatible
+    # noinspection PyTypeChecker
+    def get_value(self):
+        return get_correctly_typed_value(self.value_type, self.value)
+
+
 class FeatureState(LifecycleModel, models.Model):
     feature = models.ForeignKey(
         Feature, related_name="feature_states", on_delete=models.CASCADE
     )
+
     environment = models.ForeignKey(
         "environments.Environment",
         related_name="feature_states",
@@ -225,26 +234,19 @@ class FeatureState(LifecycleModel, models.Model):
     enabled = models.BooleanField(default=False)
     history = HistoricalRecords()
 
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.IntegerField(default=1, null=True)
+    live_from = models.DateTimeField(null=True)
+
+    change_request = models.ForeignKey(
+        "workflows_core.ChangeRequest",
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="feature_states",
+    )
+
     class Meta:
-        # Note: this is manually overridden in the migrations for Oracle DBs to include
-        # all 4 unique fields in each of these constraints. See migration 0025.
-        constraints = [
-            UniqueConstraint(
-                fields=["environment", "feature", "feature_segment"],
-                condition=Q(identity__isnull=True),
-                name="unique_for_feature_segment",
-            ),
-            UniqueConstraint(
-                fields=["environment", "feature", "identity"],
-                condition=Q(feature_segment__isnull=True),
-                name="unique_for_identity",
-            ),
-            UniqueConstraint(
-                fields=["environment", "feature"],
-                condition=Q(identity__isnull=True, feature_segment__isnull=True),
-                name="unique_for_environment",
-            ),
-        ]
         ordering = ["id"]
 
     def __gt__(self, other):
@@ -277,9 +279,53 @@ class FeatureState(LifecycleModel, models.Model):
             # flag, else False.
             return not (other.identity or self.feature_segment < other.feature_segment)
 
+        if self.type == other.type:
+            return (
+                self.version is not None
+                and other.version is not None
+                and self.version > other.version
+            ) or (self.version is not None and other.version is None)
+
         # if we've reached here, then self is just the environment default. In this case, other is higher priority if
         # it has a feature_segment or an identity
         return not (other.feature_segment or other.identity)
+
+    def clone(
+        self,
+        env: "Environment",
+        live_from: datetime.datetime = None,
+        as_draft: bool = False,
+        version: int = None,
+    ) -> "FeatureState":
+        # Cloning the Identity is not allowed because they are closely tied
+        # to the environment
+        assert self.identity is None
+        clone = deepcopy(self)
+        clone.id = None
+        clone.feature_segment = (
+            FeatureSegment.objects.get(
+                environment=env,
+                feature=clone.feature,
+                segment=self.feature_segment.segment,
+            )
+            if self.feature_segment
+            else None
+        )
+        clone.environment = env
+        clone.version = None if as_draft else version or self.version
+        clone.live_from = live_from
+        clone.save()
+        # clone the related objects
+        self.feature_state_value.clone(clone)
+
+        if self.feature.type == MULTIVARIATE:
+            mv_values = [
+                mv_value.clone(feature_state=clone, persist=False)
+                for mv_value in self.multivariate_feature_state_values.all()
+            ]
+            MultivariateFeatureStateValue.objects.bulk_create(mv_values)
+
+        return clone
 
     def get_feature_state_value(self, identity: "Identity" = None) -> typing.Any:
         feature_state_value = (
@@ -335,14 +381,37 @@ class FeatureState(LifecycleModel, models.Model):
         except ObjectDoesNotExist:
             return None
 
+    @property
+    def type(self) -> str:
+        if self.identity_id and self.feature_segment_id is None:
+            return IDENTITY
+        elif self.feature_segment_id and self.identity_id is None:
+            return FEATURE_SEGMENT
+        elif self.identity_id is None and self.feature_segment_id is None:
+            return ENVIRONMENT
+
+        logger.error(
+            "FeatureState %d does not have a valid type. Defaulting to environment.",
+            self.id,
+        )
+        return ENVIRONMENT
+
     @hook(BEFORE_CREATE)
-    def check_for_existing_env_feature_state(self):
+    def check_for_existing_feature_state(self):
         # prevent duplicate feature states being created for an environment
+        if self.version is None:
+            return
+
         if FeatureState.objects.filter(
-            environment=self.environment, feature=self.feature
-        ).exists() and not (self.identity or self.feature_segment):
+            environment=self.environment,
+            feature=self.feature,
+            version=self.version,
+            feature_segment=self.feature_segment,
+            identity=self.identity,
+        ).exists():
             raise ValidationError(
-                "Feature state already exists for this environment and feature"
+                "Feature state already exists for this environment, feature, "
+                "version, segment & identity combination"
             )
 
     @hook(AFTER_CREATE)
@@ -371,10 +440,6 @@ class FeatureState(LifecycleModel, models.Model):
             ]
             MultivariateFeatureStateValue.objects.bulk_create(mv_feature_state_values)
 
-    @hook(AFTER_SAVE)
-    def trigger_feature_state_change_webhooks(self):
-        trigger_feature_state_change_webhooks(self)
-
     def get_feature_state_value_defaults(self) -> dict:
         if self.feature.initial_value is None:
             return {}
@@ -390,14 +455,20 @@ class FeatureState(LifecycleModel, models.Model):
         return {"type": type, key_name: parse_func(value)}
 
     @staticmethod
-    def get_feature_state_key_name(fsv_type):
+    def get_feature_state_key_name(fsv_type) -> str:
         return {
             INTEGER: "integer_value",
             BOOLEAN: "boolean_value",
             STRING: "string_value",
-        }.get(
-            fsv_type, "string_value"
-        )  # The default was chosen for backwards compatibility
+        }.get(fsv_type)
+
+    @staticmethod
+    def get_featue_state_value_type(value) -> str:
+        fsv_type = type(value).__name__
+        accepted_types = (STRING, INTEGER, BOOLEAN)
+
+        # Default to string if not an anticipate type value to keep backwards compatibility.
+        return fsv_type if fsv_type in accepted_types else STRING
 
     def generate_feature_state_value_data(self, value):
         """
@@ -407,12 +478,9 @@ class FeatureState(LifecycleModel, models.Model):
         :param value: feature state value of variable type
         :return: dictionary to pass directly into feature state value serializer
         """
-        fsv_type = type(value).__name__
-        accepted_types = (STRING, INTEGER, BOOLEAN)
-
+        fsv_type = self.get_featue_state_value_type(value)
         return {
-            # Default to string if not an anticipate type value to keep backwards compatibility.
-            "type": fsv_type if fsv_type in accepted_types else STRING,
+            "type": fsv_type,
             "feature_state": self.id,
             self.get_feature_state_key_name(fsv_type): value,
         }
@@ -425,13 +493,113 @@ class FeatureState(LifecycleModel, models.Model):
             s = f"Identity {self.identity.identifier} - {s}"
         return s
 
+    @classmethod
+    def get_environment_flags_list(
+        cls,
+        environment: "Environment",
+        feature_name: str = None,
+        additional_filters: Q = None,
+    ) -> typing.List["FeatureState"]:
+        """
+        Get a list of the latest committed versions of FeatureState objects that are
+        associated with the given environment only (i.e. not identity or segment).
+
+        Note: uses a single query to get all valid versions of a given environment's
+        feature states. The logic to grab the latest version is then handled in python
+        by building a dictionary. Returns a list of FeatureState objects.
+        """
+
+        # Get all feature states for a given environment with a valid live_from in the
+        # past. Note: includes all versions for a given environment / feature
+        # combination. We filter for the latest version later on.
+        feature_states = (
+            cls.objects.select_related("feature", "feature_state_value")
+            .filter(
+                environment=environment,
+                live_from__isnull=False,
+                live_from__lte=timezone.now(),
+                version__isnull=False,
+            )
+            .exclude(
+                feature__project__hide_disabled_flags=True,
+                enabled=False,
+            )
+        )
+
+        if feature_name:
+            feature_states = feature_states.filter(feature__name__iexact=feature_name)
+
+        if additional_filters:
+            feature_states = feature_states.filter(additional_filters)
+
+        # Build up a dictionary in the form
+        # {(feature_id, feature_segment_id, identity_id): feature_state}
+        # and only keep the latest version for each feature.
+        feature_states_dict = {}
+        for feature_state in feature_states:
+            key = (
+                feature_state.feature_id,
+                feature_state.feature_segment_id,
+                feature_state.identity_id,
+            )
+            current_feature_state = feature_states_dict.get(key)
+            if (
+                not current_feature_state
+                or feature_state.version > current_feature_state.version
+            ):
+                feature_states_dict[key] = feature_state
+
+        return list(feature_states_dict.values())
+
+    @classmethod
+    def get_environment_flags_queryset(cls, environment: "Environment") -> QuerySet:
+        """
+        Get a queryset of the latest live versions of an environments' feature states
+        """
+
+        feature_states_list = cls.get_environment_flags_list(environment)
+        return FeatureState.objects.filter(id__in=[fs.id for fs in feature_states_list])
+
+    @hook(BEFORE_CREATE)
+    def set_live_from_for_version_1(self):
+        """
+        Set the live_from date on newly created, version 1 feature states to maintain
+        the previous behaviour.
+        """
+        if self.version == 1 and not self.live_from:
+            self.live_from = timezone.now()
+
+    @classmethod
+    def get_next_version_number(
+        cls,
+        environment_id: int,
+        feature_id: int,
+        feature_segment_id: int,
+        identity_id: int,
+    ):
+        return (
+            cls.objects.filter(
+                environment__id=environment_id,
+                feature__id=feature_id,
+                feature_segment__id=feature_segment_id,
+                identity__id=identity_id,
+            )
+            .aggregate(max_version=Max("version"))
+            .get("max_version", 0)
+            + 1
+        )
+
 
 class FeatureStateValue(AbstractBaseFeatureValueModel):
     feature_state = models.OneToOneField(
         FeatureState, related_name="feature_state_value", on_delete=models.CASCADE
     )
 
-    # TODO: increase max length of string value on base model class
-    string_value = models.CharField(null=True, max_length=20000, blank=True)
-
     history = HistoricalRecords()
+
+    def clone(self, feature_state: FeatureState) -> "FeatureStateValue":
+        clone = deepcopy(self)
+        clone.id = None
+        clone.feature_state = feature_state
+        clone.save()
+        return clone

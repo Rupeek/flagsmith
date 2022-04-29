@@ -1,7 +1,8 @@
 import json
-from unittest import TestCase
+from unittest import TestCase, mock
 
 import pytest
+from core.constants import STRING
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -9,7 +10,7 @@ from rest_framework.test import APIClient
 from audit.models import AuditLog, RelatedObjectType
 from environments.identities.models import Identity
 from environments.identities.traits.models import Trait
-from environments.models import STRING, Environment, Webhook
+from environments.models import Environment, EnvironmentAPIKey, Webhook
 from environments.permissions.models import UserEnvironmentPermission
 from features.models import Feature, FeatureState
 from organisations.models import Organisation, OrganisationRole
@@ -18,6 +19,7 @@ from projects.models import (
     ProjectPermissionModel,
     UserProjectPermission,
 )
+from segments.models import EQUAL, Condition, Segment, SegmentRule
 from users.models import FFAdminUser
 from util.tests import Helper
 
@@ -147,9 +149,10 @@ class EnvironmentTestCase(TestCase):
         data = {"project": self.project.id, "name": "New name"}
 
         # When
-        self.client.put(url, data=data)
+        response = self.client.put(url, data=data)
 
         # Then
+        assert response.status_code == status.HTTP_200_OK
         assert (
             AuditLog.objects.filter(
                 related_object_type=RelatedObjectType.ENVIRONMENT.name
@@ -268,9 +271,11 @@ class EnvironmentTestCase(TestCase):
         )
 
         # When
-        self.client.post(url, data={"key": trait_key})
+        response = self.client.post(url, data={"key": trait_key})
 
         # Then
+        assert response.status_code == status.HTTP_200_OK
+
         assert not Trait.objects.filter(
             identity=identity_one_environment_one, trait_key=trait_key
         ).exists()
@@ -333,7 +338,7 @@ class EnvironmentTestCase(TestCase):
         # Then
         assert response.status_code == status.HTTP_200_OK
         assert (
-            len(response.json()) == 1
+            len(response.json()) == 2
         )  # hard code how many permissions we expect there to be
 
     def test_environment_user_can_get_their_permissions(self):
@@ -359,6 +364,35 @@ class EnvironmentTestCase(TestCase):
         assert response.status_code == status.HTTP_200_OK
         assert not response.json()["admin"]
         assert "VIEW_ENVIRONMENT" in response.json()["permissions"]
+
+    def test_get_document(self):
+        # Given
+        # an environment
+        environment = Environment.objects.create(
+            name="Test Environment", project=self.project
+        )
+
+        # and some other sample data to make sure we're testing all of the document
+        Feature.objects.create(name="test_feature", project=self.project)
+        segment = Segment.objects.create(name="My segment", project=self.project)
+        segment_rule = SegmentRule.objects.create(
+            segment=segment, type=SegmentRule.ALL_RULE
+        )
+        Condition.objects.create(
+            operator=EQUAL, property="property", value="value", rule=segment_rule
+        )
+
+        # and the relevant URL to get an environment document
+        url = reverse(
+            "api-v1:environments:environment-get-document", args=[environment.api_key]
+        )
+
+        # When
+        response = self.client.get(url)
+
+        # Then
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()
 
 
 @pytest.mark.django_db
@@ -417,6 +451,29 @@ class WebhookViewSetTestCase(TestCase):
         # and
         webhook.refresh_from_db()
         assert webhook.url == data["url"] and not webhook.enabled
+
+    def test_can_update_secret(self):
+        # Given
+        webhook = Webhook.objects.create(
+            url=self.valid_webhook_url, environment=self.environment
+        )
+        url = reverse(
+            "api-v1:environments:environment-webhooks-detail",
+            args=[self.environment.api_key, webhook.id],
+        )
+        data = {"secret": "random_secret"}
+
+        # When
+        res = self.client.patch(
+            url, data=json.dumps(data), content_type="application/json"
+        )
+
+        # Then
+        assert res.status_code == status.HTTP_200_OK
+
+        # and
+        webhook.refresh_from_db()
+        assert webhook.secret == data["secret"]
 
     def test_can_delete_webhook_for_an_environment(self):
         # Given
@@ -481,3 +538,127 @@ class WebhookViewSetTestCase(TestCase):
 
         # and
         assert Webhook.objects.filter(id=webhook.id).exists()
+
+    @mock.patch("webhooks.mixins.trigger_sample_webhook")
+    def test_trigger_sample_webhook_calls_trigger_sample_webhook_method_with_correct_arguments(
+        self, trigger_sample_webhook
+    ):
+        # Given
+        mocked_response = mock.MagicMock(status_code=200)
+        trigger_sample_webhook.return_value = mocked_response
+        url = reverse(
+            "api-v1:environments:environment-webhooks-trigger-sample-webhook",
+            args=[self.environment.api_key],
+        )
+        data = {"url": self.valid_webhook_url}
+
+        # When
+        response = self.client.post(url, data)
+
+        # Then
+        assert response.json()["message"] == "Request returned 200"
+        assert response.status_code == status.HTTP_200_OK
+        args, _ = trigger_sample_webhook.call_args
+        assert args[0].url == self.valid_webhook_url
+
+
+@pytest.mark.django_db
+class EnvironmentAPIKeyViewSetTestCase(TestCase):
+    def setUp(self) -> None:
+        self.organisation = Organisation.objects.create(name="Test Org")
+        self.project = Project.objects.create(
+            organisation=self.organisation, name="Test Project"
+        )
+        self.environment = Environment.objects.create(
+            project=self.project, name="Test Environment"
+        )
+
+        user = FFAdminUser.objects.create(email="test@example.com")
+        user.add_organisation(self.organisation, OrganisationRole.ADMIN)
+
+        self.client = APIClient()
+        self.client.force_authenticate(user)
+
+        self.list_url = reverse(
+            "api-v1:environments:api-keys-list", args={self.environment.api_key}
+        )
+
+    def test_list_api_keys(self):
+        # Given
+        api_key_1 = EnvironmentAPIKey.objects.create(
+            environment=self.environment, name="api key 1"
+        )
+        api_key_2 = EnvironmentAPIKey.objects.create(
+            environment=self.environment, name="api key 2"
+        )
+
+        # When
+        response = self.client.get(self.list_url)
+
+        # Then
+        assert response.status_code == status.HTTP_200_OK
+
+        response_json = response.json()
+        assert len(response_json) == 2
+
+        assert {api_key["id"] for api_key in response_json} == {
+            api_key_1.id,
+            api_key_2.id,
+        }
+
+    def test_create_api_key(self):
+        # Given
+        data = {"name": "Some key"}
+
+        # When
+        response = self.client.post(
+            self.list_url, data=json.dumps(data), content_type="application/json"
+        )
+
+        # Then
+        assert response.status_code == status.HTTP_201_CREATED
+
+        response_json = response.json()
+        assert response_json["key"] and response_json["key"].startswith("ser.")
+        assert response_json["active"]
+
+    def test_update_api_key(self):
+        # Given
+        old_name = "Some key"
+        api_key = EnvironmentAPIKey.objects.create(
+            name=old_name, environment=self.environment
+        )
+        update_url = reverse(
+            "api-v1:environments:api-keys-detail",
+            args=[self.environment.api_key, api_key.id],
+        )
+
+        # When
+        new_name = "new name"
+        response = self.client.patch(
+            update_url, data={"active": False, "name": new_name}
+        )
+
+        # Then
+        assert response.status_code == status.HTTP_200_OK
+
+        api_key.refresh_from_db()
+        assert api_key.name == new_name
+        assert not api_key.active
+
+    def test_delete_api_key(self):
+        # Given
+        api_key = EnvironmentAPIKey.objects.create(
+            name="Some key", environment=self.environment
+        )
+
+        delete_url = reverse(
+            "api-v1:environments:api-keys-detail",
+            args=[self.environment.api_key, api_key.id],
+        )
+
+        # When
+        self.client.delete(delete_url)
+
+        # Then
+        assert not EnvironmentAPIKey.objects.filter(id=api_key.id)

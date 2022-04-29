@@ -27,11 +27,11 @@ const VariationValue = ({
                             placeholder="e.g. 'big' "
                           />
 )}
-                      tooltip={Constants.strings.REMOTE_CONFIG_DESCRIPTION}
+                      tooltip={Constants.strings.REMOTE_CONFIG_DESCRIPTION_VARIATION}
                       title="Value"
                     />
                 </div>
-                <div className="ml-2" style={{ width: 200 }}>
+                <div className="ml-2" style={{ width: 210 }}>
                     <InputGroup
                       type="text"
                       onChange={(e) => {

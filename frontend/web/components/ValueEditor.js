@@ -4,6 +4,96 @@ import cx from 'classnames';
 import Highlight from './Highlight';
 import ConfigProvider from '../../common/providers/ConfigProvider';
 
+
+var toml = require('toml');
+const yaml = require('yaml')
+
+function xmlIsInvalid(xmlStr) {
+    const parser = new DOMParser();
+    const dom = parser.parseFromString(xmlStr, "application/xml");
+    for (const element of Array.from(dom.querySelectorAll("parsererror"))) {
+        if (element instanceof HTMLElement) {
+            // Found the error.
+            return element.innerText;
+        }
+    }
+    // No errors found.
+    return false;
+}
+
+class Validation extends Component {
+    constructor(props) {
+        super(props);
+        this.state = {}
+        this.validateLanguage(this.props.language, this.props.value)
+    }
+    componentDidUpdate(prevProps, prevState, snapshot) {
+        if(prevProps.value!==this.props.value || prevProps.language!==this.props.language) {
+            this.validateLanguage(this.props.language, this.props.value)
+        }
+    }
+
+    validateLanguage = (language, value)=>{
+        const validate = new Promise((resolve)=>{
+            switch (language) {
+                case 'json': {
+                    try {
+                        JSON.parse(value)
+                        resolve(false)
+                    } catch (e) {
+                        resolve(e.message)
+                    }
+                    break;
+                }
+                case 'ini': {
+                    try {
+                        toml.parse(value)
+                        resolve(false)
+                    } catch (e) {
+                        resolve(e.message)
+                    }
+                    break;
+                }
+                case 'yaml': {
+                    try {
+                        yaml.parse(value)
+                        resolve(false)
+                    } catch (e) {
+                        resolve(e.message)
+                    }
+                    break;
+                }
+                case 'xml': {
+                    try {
+                        const error = xmlIsInvalid(value)
+                        resolve(error)
+                    } catch (e) {
+                        resolve("Failed to parse XML")
+                    }
+                    break;
+                }
+            }
+        })
+
+        validate.then((error)=>{
+            this.setState({error:error})
+        })
+
+    }
+
+    render() {
+        const displayLanguage = this.props.language === 'ini' ? 'toml' :this.props.language
+        return (
+            <Tooltip position="top" title={!this.state.error?<ion className="text-white ion-ios-checkmark-circle"/>:<ion id="language-validation-error" className="text-white ion-ios-warning"/>}>
+                {!this.state.error? displayLanguage + " validation passed": displayLanguage + " validation error, please check your value.<br/>Error: " + this.state.error}
+            </Tooltip>
+        )
+        if(this.state.error) {
+            return
+        }
+        return
+    }
+}
 class ValueEditor extends Component {
     state = {
         language: 'txt',
@@ -23,47 +113,75 @@ class ValueEditor extends Component {
         // });
     }
 
+    renderValidation = ()=> {
+        return <Validation language={this.state.language} value={this.props.value}/>
+    }
+
     render() {
         const { ...rest } = this.props;
-        if (!this.props.hasFeature('value_editor')) {
-            return (
-                <textarea
-                  {...rest}
-                />
-            );
-        }
         return (
             <div className={cx('value-editor', { light: this.state.language === 'txt' })}>
                 <Row className="select-language">
                     <span
-                      onClick={() => this.setState({ language: 'txt' })}
+                      onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          this.setState({ language: 'txt' });
+                      }}
                       className={cx('txt', { active: this.state.language === 'txt' })}
                     >
                     .txt
                     </span>
                     <span
-                      onClick={() => this.setState({ language: 'json' })}
+                      onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          this.setState({ language: 'json' });
+                      }}
                       className={cx('json', { active: this.state.language === 'json' })}
                     >
-                    .json
+                    .json {this.state.language === 'json' && this.renderValidation()}
                     </span>
                     <span
-                      onClick={() => this.setState({ language: 'xml' })}
+                      onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          this.setState({ language: 'xml' });
+                      }}
                       className={cx('xml', { active: this.state.language === 'xml' })}
                     >
-                    .xml
+                    .xml {this.state.language === 'xml' && this.renderValidation()}
                     </span>
                     <span
-                      onClick={() => this.setState({ language: 'ini' })}
+                      onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+
+                          this.setState({ language: 'ini' });
+                      }}
                       className={cx('ini', { active: this.state.language === 'ini' })}
                     >
-                    .toml
+                        .toml {this.state.language === 'ini' && this.renderValidation()}
                     </span>
                     <span
-                      onClick={() => this.setState({ language: 'yaml' })}
+                      onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          this.setState({ language: 'yaml' });
+                      }}
                       className={cx('yaml', { active: this.state.language === 'yaml' })}
                     >
-                    .yaml
+                        .yaml {this.state.language === 'yaml' && this.renderValidation()}
+                    </span>
+                    <span
+                        onMouseDown={(e) => {
+                            const res = Clipboard.setString(this.props.value);
+                            toast(res ? 'Clipboard set' : 'Could not set clipboard :(');
+                        }}
+                        className={cx('txt primary' )}
+                    >
+                        <span className="ion ion-md-clipboard mr-0 ml-2 txt primary"/> copy
+
                     </span>
                 </Row>
                 {this.state.language === 'txt' ? (

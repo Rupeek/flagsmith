@@ -1,23 +1,24 @@
-import hashlib
 import typing
 
 from django.db import models
-from django.db.models import Q, Prefetch
-from django.utils.encoding import python_2_unicode_compatible
+from django.db.models import Prefetch, Q
+from django.utils import timezone
 
-from environments.models import Environment
+from environments.dynamodb import DynamoIdentityWrapper
 from environments.identities.traits.models import Trait
+from environments.models import Environment
 from features.models import FeatureState
 from features.multivariate.models import MultivariateFeatureStateValue
 
 
-@python_2_unicode_compatible
 class Identity(models.Model):
     identifier = models.CharField(max_length=2000)
     created_date = models.DateTimeField("DateCreated", auto_now_add=True)
     environment = models.ForeignKey(
         Environment, related_name="identities", on_delete=models.CASCADE
     )
+
+    dynamo_wrapper = DynamoIdentityWrapper()
 
     class Meta:
         verbose_name_plural = "Identities"
@@ -50,12 +51,19 @@ class Identity(models.Model):
             feature_segment__environment=self.environment,
         )
         environment_default_query = Q(identity=None, feature_segment=None)
+        only_live_versions_query = Q(
+            live_from__lte=timezone.now(), version__isnull=False
+        )
 
         # define the full query
-        full_query = belongs_to_environment_query & (
-            overridden_for_identity_query
-            | overridden_for_segment_query
-            | environment_default_query
+        full_query = (
+            only_live_versions_query
+            & belongs_to_environment_query
+            & (
+                overridden_for_identity_query
+                | overridden_for_segment_query
+                | environment_default_query
+            )
         )
 
         select_related_args = [
@@ -86,7 +94,8 @@ class Identity(models.Model):
             if flag.feature_id not in identity_flags:
                 identity_flags[flag.feature_id] = flag
             else:
-                if flag > identity_flags[flag.feature_id]:
+                current_flag = identity_flags[flag.feature_id]
+                if flag > current_flag:
                     identity_flags[flag.feature_id] = flag
 
         if self.environment.project.hide_disabled_flags:
@@ -123,6 +132,11 @@ class Identity(models.Model):
         :return: list of TraitModels
         """
         trait_models = []
+
+        # Remove traits having Null(None) values
+        trait_data_items = filter(
+            lambda trait: trait["trait_value"] is not None, trait_data_items
+        )
         for trait_data_item in trait_data_items:
             trait_key = trait_data_item["trait_key"]
             trait_value = trait_data_item["trait_value"]
@@ -149,7 +163,6 @@ class Identity(models.Model):
         """
         current_traits = self.get_all_user_traits()
 
-        new_traits = []
         keys_to_delete = []
 
         for trait_data_item in trait_data_items:
@@ -170,12 +183,9 @@ class Identity(models.Model):
                     setattr(current_trait, attr, value)
                 current_trait.save()
             else:
-                # create a new trait and append it to the list of new traits
-                new_traits.append(
-                    Trait.objects.create(
-                        trait_key=trait_key, identity=self, **trait_value_data
-                    )
-                )
+                # use update_or_create to avoid race condition
+                kwargs = {"trait_key": trait_key, "identity": self}
+                Trait.objects.update_or_create(defaults=trait_value_data, **kwargs)
 
         # delete the traits that had their keys set to None
         if keys_to_delete:

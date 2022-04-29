@@ -6,6 +6,7 @@ import pytest
 import pytz
 from django.forms import model_to_dict
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -24,16 +25,17 @@ from features.models import (
     FeatureStateValue,
 )
 from features.multivariate.models import MultivariateFeatureOption
-from features.value_types import STRING, INTEGER, BOOLEAN
+from features.value_types import STRING
 from organisations.models import Organisation, OrganisationRole
 from projects.models import Project
 from projects.tags.models import Tag
 from segments.models import Segment
 from users.models import FFAdminUser
 from util.tests import Helper
+from webhooks.webhooks import WebhookEventType
 
 # patch this function as it's triggering extra threads and causing errors
-mock.patch("features.models.trigger_feature_state_change_webhooks").start()
+mock.patch("features.signals.trigger_feature_state_change_webhooks").start()
 
 
 @pytest.mark.django_db
@@ -44,12 +46,12 @@ class ProjectFeatureTestCase(TestCase):
 
     def setUp(self):
         self.client = APIClient()
-        user = Helper.create_ffadminuser()
-        self.client.force_authenticate(user=user)
+        self.user = Helper.create_ffadminuser()
+        self.client.force_authenticate(user=self.user)
 
         self.organisation = Organisation.objects.create(name="Test Org")
 
-        user.add_organisation(self.organisation, OrganisationRole.ADMIN)
+        self.user.add_organisation(self.organisation, OrganisationRole.ADMIN)
 
         self.project = Project.objects.create(
             name="Test project", organisation=self.organisation
@@ -83,6 +85,36 @@ class ProjectFeatureTestCase(TestCase):
             project=self.project2,
         )
 
+    def test_default_is_archived_is_false(self):
+        # Given - set up data
+        data = {
+            "name": "test feature",
+        }
+        url = reverse("api-v1:projects:project-features-list", args=[self.project.id])
+
+        # When
+        response = self.client.post(
+            url, data=json.dumps(data), content_type="application/json"
+        ).json()
+
+        # Then
+        assert response["is_archived"] is False
+
+    def test_update_is_archived_works(self):
+        # Given
+        feature = Feature.objects.create(name="test feature", project=self.project)
+        url = reverse(
+            "api-v1:projects:project-features-detail",
+            args=[self.project.id, feature.id],
+        )
+        data = {"name": "test feature", "is_archived": True}
+
+        # When
+        response = self.client.put(url, data=data).json()
+
+        # Then
+        assert response["is_archived"] is True
+
     def test_should_create_feature_states_when_feature_created(self):
         # Given - set up data
         default_value = "This is a value"
@@ -115,6 +147,35 @@ class ProjectFeatureTestCase(TestCase):
             environment=self.environment_1
         ).first()
         assert feature_state.get_feature_state_value() == default_value
+
+    def test_owners_is_read_only_for_feature_create(self):
+        # Given - set up data
+        default_value = "This is a value"
+        data = {
+            "name": "test feature",
+            "initial_value": default_value,
+            "project": self.project.id,
+            "owners": [
+                {
+                    "id": 2,
+                    "email": "fake_user@mail.com",
+                    "first_name": "fake",
+                    "last_name": "user",
+                }
+            ],
+        }
+        url = reverse("api-v1:projects:project-features-list", args=[self.project.id])
+
+        # When
+        response = self.client.post(
+            url, data=json.dumps(data), content_type="application/json"
+        )
+
+        # Then
+        assert response.status_code == status.HTTP_201_CREATED
+        assert len(response.json()["owners"]) == 1
+        assert response.json()["owners"][0]["id"] == self.user.id
+        assert response.json()["owners"][0]["email"] == self.user.email
 
     def test_should_create_feature_states_with_integer_value_when_feature_created(self):
         # Given - set up data
@@ -221,15 +282,25 @@ class ProjectFeatureTestCase(TestCase):
         data = {"name": "Test feature flag", "type": "FLAG", "project": self.project.id}
 
         # When
-        self.client.post(url, data=data)
+        response = self.client.post(url, data=data)
+        feature_id = response.json()["id"]
 
         # Then
+
+        # Audit log exists for the feature
         assert (
             AuditLog.objects.filter(
-                related_object_type=RelatedObjectType.FEATURE.name
+                related_object_type=RelatedObjectType.FEATURE.name,
+                related_object_id=feature_id,
             ).count()
             == 1
         )
+        # and Audit log exists for every environment
+        assert AuditLog.objects.filter(
+            related_object_type=RelatedObjectType.FEATURE_STATE.name,
+            project=self.project,
+            environment__in=self.project.environments.all(),
+        ).count() == len(self.project.environments.all())
 
     def test_audit_log_created_when_feature_updated(self):
         # Given
@@ -254,6 +325,95 @@ class ProjectFeatureTestCase(TestCase):
             ).count()
             == 1
         )
+
+    def test_audit_logs_created_when_feature_deleted(self):
+        # Given
+        feature = Feature.objects.create(name="test feature", project=self.project)
+        feature_states_ids = list(feature.feature_states.values_list("id", flat=True))
+        # When
+        self.client.delete(
+            self.project_feature_detail_url % (self.project.id, feature.id)
+        )
+        # Then
+        # Audit log exists for the feature
+        assert AuditLog.objects.get(
+            related_object_type=RelatedObjectType.FEATURE.name,
+            related_object_id=feature.id,
+        )
+        # and audit logs exists for all feature states for that feature
+        assert AuditLog.objects.filter(
+            related_object_type=RelatedObjectType.FEATURE_STATE.name,
+            related_object_id__in=feature_states_ids,
+        ).count() == len(feature_states_ids)
+
+    @mock.patch("features.views.trigger_feature_state_change_webhooks")
+    def test_feature_state_webhook_triggered_when_feature_deleted(
+        self, mocked_trigger_fs_change_webhook
+    ):
+        # Given
+        feature = Feature.objects.create(name="test feature", project=self.project)
+        feature_states = list(feature.feature_states.all())
+        # When
+        self.client.delete(
+            self.project_feature_detail_url % (self.project.id, feature.id)
+        )
+        # Then
+        mock_calls = [
+            mock.call(fs, WebhookEventType.FLAG_DELETED) for fs in feature_states
+        ]
+        mocked_trigger_fs_change_webhook.has_calls(mock_calls)
+
+    def test_add_owners_adds_owner(self):
+        # Given
+        feature = Feature.objects.create(name="Test Feature", project=self.project)
+        user_2 = FFAdminUser.objects.create_user(email="user2@mail.com")
+        user_3 = FFAdminUser.objects.create_user(email="user3@mail.com")
+        url = reverse(
+            "api-v1:projects:project-features-add-owners",
+            args=[self.project.id, feature.id],
+        )
+        data = {"user_ids": [user_2.id, user_3.id]}
+        # When
+        json_response = self.client.post(
+            url, data=json.dumps(data), content_type="application/json"
+        ).json()
+        assert len(json_response["owners"]) == 2
+        assert json_response["owners"][0] == {
+            "id": user_2.id,
+            "email": user_2.email,
+            "first_name": user_2.first_name,
+            "last_name": user_2.last_name,
+        }
+        assert json_response["owners"][1] == {
+            "id": user_3.id,
+            "email": user_3.email,
+            "first_name": user_3.first_name,
+            "last_name": user_3.last_name,
+        }
+
+    def test_remove_owners_only_remove_specified_owners(self):
+        # Given
+        user_2 = FFAdminUser.objects.create_user(email="user2@mail.com")
+        user_3 = FFAdminUser.objects.create_user(email="user3@mail.com")
+        feature = Feature.objects.create(name="Test Feature", project=self.project)
+        feature.owners.add(user_2, user_3)
+
+        url = reverse(
+            "api-v1:projects:project-features-remove-owners",
+            args=[self.project.id, feature.id],
+        )
+        data = {"user_ids": [user_2.id]}
+        # When
+        json_response = self.client.post(
+            url, data=json.dumps(data), content_type="application/json"
+        ).json()
+        assert len(json_response["owners"]) == 1
+        assert json_response["owners"][0] == {
+            "id": user_3.id,
+            "email": user_3.email,
+            "first_name": user_3.first_name,
+            "last_name": user_3.last_name,
+        }
 
     def test_audit_log_created_when_feature_state_created_for_identity(self):
         # Given
@@ -307,9 +467,7 @@ class ProjectFeatureTestCase(TestCase):
         data = {"feature": feature.id, "enabled": False}
 
         # When
-        res = self.client.put(
-            url, data=json.dumps(data), content_type="application/json"
-        )
+        self.client.put(url, data=json.dumps(data), content_type="application/json")
 
         # Then
         assert (
@@ -347,7 +505,7 @@ class ProjectFeatureTestCase(TestCase):
         )
 
         # When
-        res = self.client.delete(url)
+        self.client.delete(url)
 
         # Then
         assert (
@@ -494,6 +652,27 @@ class ProjectFeatureTestCase(TestCase):
         feature = response_json["results"][0]
         assert "tags" in feature
 
+    def test_list_features_is_archived_filter(self):
+        # Firstly, let's setup the initial data
+        feature = Feature.objects.create(name="test_feature", project=self.project)
+        archived_feature = Feature.objects.create(
+            name="archived_feature", project=self.project, is_archived=True
+        )
+        base_url = reverse(
+            "api-v1:projects:project-features-list", args=[self.project.id]
+        )
+        # Next, let's test true filter
+        url = f"{base_url}?is_archived=true"
+        response = self.client.get(url)
+        assert len(response.json()["results"]) == 1
+        assert response.json()["results"][0]["id"] == archived_feature.id
+
+        # Finally, let's test false filter
+        url = f"{base_url}?is_archived=false"
+        response = self.client.get(url)
+        assert len(response.json()["results"]) == 1
+        assert response.json()["results"][0]["id"] == feature.id
+
     def test_put_feature_does_not_update_feature_states(self):
         # Given
         feature = Feature.objects.create(
@@ -565,6 +744,37 @@ class ProjectFeatureTestCase(TestCase):
         response_json = response.json()
         assert len(response_json["multivariate_options"]) == 1
 
+    def test_create_mv_feature_with_invalid_percentage_allocation_returns_400(self):
+        # Given
+        data = {
+            "name": "test_feature",
+            "default_enabled": True,
+            "multivariate_options": [
+                {
+                    "type": "unicode",
+                    "string_value": "test-value-50",
+                    "default_percentage_allocation": 50,
+                },
+                {
+                    "type": "unicode",
+                    "string_value": "test-value-51",
+                    "default_percentage_allocation": 51,
+                },
+            ],
+        }
+        url = reverse("api-v1:projects:project-features-list", args=[self.project.id])
+
+        # When
+        response = self.client.post(
+            url, data=json.dumps(data), content_type="application/json"
+        )
+        # Then
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            response.json()["multivariate_options"][0]
+            == "Invalid percentage allocation"
+        )
+
     def test_update_feature_with_multivariate_options(self):
         # Given
         # a feature
@@ -573,13 +783,19 @@ class ProjectFeatureTestCase(TestCase):
         # a multivariate feature option for the feature that we will leave out from
         # the list in the PUT request
         multivariate_option_to_delete = MultivariateFeatureOption.objects.create(
-            feature=feature, type=STRING, string_value="test-value"
+            feature=feature,
+            type=STRING,
+            string_value="test-value_to_delete",
+            default_percentage_allocation=50,
         )
 
         # a multivariate feature option for the feature that we will update in the
         # PUT request
         multivariate_option_to_update = MultivariateFeatureOption.objects.create(
-            feature=feature, type=STRING, string_value="test-value"
+            feature=feature,
+            type=STRING,
+            string_value="test-value",
+            default_percentage_allocation=50,
         )
         updated_mv_option_data = model_to_dict(multivariate_option_to_update)
         updated_mv_option_data["string_value"] = "updated-value"
@@ -588,7 +804,11 @@ class ProjectFeatureTestCase(TestCase):
         data = {
             "name": "test_feature",
             "multivariate_options": [
-                {"type": "unicode", "string_value": "test-value"},  # new mv option
+                {
+                    "type": "unicode",
+                    "string_value": "test-value",
+                    "default_percentage_allocation": 50,
+                },  # new mv option
                 updated_mv_option_data,  # the updated mv option
             ],  # and we removed the deleted one
         }
@@ -596,12 +816,10 @@ class ProjectFeatureTestCase(TestCase):
             "api-v1:projects:project-features-detail",
             args=[self.project.id, feature.id],
         )
-
         # When
         response = self.client.put(
             url, data=json.dumps(data), content_type="application/json"
         )
-
         # Then
         # The response is successful
         assert response.status_code == status.HTTP_200_OK
@@ -667,15 +885,13 @@ class FeatureStateViewSetTestCase(TestCase):
 
     def test_can_filter_feature_states_to_show_identity_overrides_only(self):
         # Given
-        feature_state = FeatureState.objects.get(
-            environment=self.environment, feature=self.feature
-        )
+        FeatureState.objects.get(environment=self.environment, feature=self.feature)
 
         identifier = "test-identity"
         identity = Identity.objects.create(
             identifier=identifier, environment=self.environment
         )
-        identity_feature_state = FeatureState.objects.create(
+        FeatureState.objects.create(
             environment=self.environment, feature=self.feature, identity=identity
         )
 
@@ -696,6 +912,55 @@ class FeatureStateViewSetTestCase(TestCase):
 
         # and
         assert res.json()["results"][0]["identity"]["identifier"] == identifier
+
+    def test_get_feature_states_only_returns_latest_versions(self):
+        # Given
+        feature_state = FeatureState.objects.get(
+            environment=self.environment, feature=self.feature
+        )
+        feature_state_v2 = feature_state.clone(
+            env=self.environment, live_from=timezone.now(), version=2
+        )
+
+        url = reverse(
+            "api-v1:environments:environment-featurestates-list",
+            args=[self.environment.api_key],
+        )
+
+        # When
+        response = self.client.get(url)
+
+        # Then
+        assert response.status_code == status.HTTP_200_OK
+
+        response_json = response.json()
+        assert len(response_json["results"]) == 1
+        assert response_json["results"][0]["id"] == feature_state_v2.id
+
+    def test_get_feature_states_does_not_return_null_versions(self):
+        # Given
+        feature_state = FeatureState.objects.get(
+            environment=self.environment, feature=self.feature
+        )
+
+        FeatureState.objects.create(
+            environment=self.environment, feature=self.feature, version=None
+        )
+
+        url = reverse(
+            "api-v1:environments:environment-featurestates-list",
+            args=[self.environment.api_key],
+        )
+
+        # When
+        response = self.client.get(url)
+
+        # Then
+        assert response.status_code == status.HTTP_200_OK
+
+        response_json = response.json()
+        assert len(response_json["results"]) == 1
+        assert response_json["results"][0]["id"] == feature_state.id
 
 
 @pytest.mark.django_db

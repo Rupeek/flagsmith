@@ -13,8 +13,8 @@ const controller = {
 
             // todo: cache project flags
             return Promise.all([
-                data.get(`${Project.api}projects/${projectId}/features/`),
-                data.get(`${Project.api}environments/${environmentId}/featurestates/`),
+                data.get(`${Project.api}projects/${projectId}/features/?page_size=999`),
+                data.get(`${Project.api}environments/${environmentId}/featurestates/?page_size=999`),
             ]).then(([features, environmentFeatures]) => {
                 if (features.results.length) {
                     createdFirstFeature = true;
@@ -77,7 +77,17 @@ const controller = {
                 store.model.lastSaved = new Date().valueOf();
                 store.changed();
             })
-            .catch(e => API.ajaxHandler(store, e));
+            .catch((e) => {
+                if (onComplete) {
+                    onComplete({
+                        ...flag,
+                        type: flag.multivariate_options && flag.multivariate_options.length ? 'MULTIVARIATE' : 'STANDARD',
+                        project: projectId,
+                    });
+                } else {
+                    API.ajaxHandler(store, e);
+                }
+            });
     },
     getInfluxDate(projectId, environmentId, flag, period) {
         data.get(`${Project.api}projects/${projectId}/features/${flag}/influx-data/?period=${period}&environment_id=${environmentId}`)
@@ -86,14 +96,14 @@ const controller = {
                 store.changed();
             }).catch(e => API.ajaxHandler(store, e));
     },
-    toggleFlag: (index, environments, comment) => {
+    toggleFlag: (index, environments, comment, environmentFlags) => {
         const flag = store.model.features[index];
         store.saving();
 
         API.trackEvent(Constants.events.TOGGLE_FEATURE);
         return Promise.all(environments.map((e) => {
-            if (store.hasFlagInEnvironment(flag.id)) {
-                const environmentFlag = store.model.keyedEnvironmentFeatures[flag.id];
+            if (store.hasFlagInEnvironment(flag.id, environmentFlags)) {
+                const environmentFlag = (environmentFlags || store.model.keyedEnvironmentFeatures)[flag.id];
                 return data.put(`${Project.api}environments/${e.api_key}/featurestates/${environmentFlag.id}/`, Object.assign({}, environmentFlag, { enabled: !environmentFlag.enabled }));
             }
             return data.post(`${Project.api}environments/${e.api_key}/featurestates/`, Object.assign({}, {
@@ -103,21 +113,37 @@ const controller = {
             }));
         }))
             .then((res) => {
-                store.model.keyedEnvironmentFeatures[flag.id] = res[0];
+                if (!environmentFlags) {
+                    store.model.keyedEnvironmentFeatures[flag.id] = res[0];
+                }
                 store.model.lastSaved = new Date().valueOf();
                 store.saved();
             });
     },
-    editFeatureState: (projectId, environmentId, flag, projectFlag, environmentFlag, segmentOverrides) => {
+    editFeatureState: (projectId, environmentId, flag, projectFlag, environmentFlag, segmentOverrides, mode) => {
         let prom;
         store.saving();
         API.trackEvent(Constants.events.EDIT_FEATURE);
-        if (environmentFlag) {
-            prom = data.put(`${Project.api}environments/${environmentId}/featurestates/${environmentFlag.id}/`, Object.assign({}, environmentFlag, {
-                feature_state_value: flag.initial_value,
-                hide_from_client: flag.hide_from_client,
-                enabled: flag.default_enabled,
-            }));
+        if (mode !== 'VALUE') {
+            prom = Promise.resolve();
+        } else if (environmentFlag) {
+            prom = data.get(`${Project.api}environments/${environmentId}/featurestates/${environmentFlag.id}/`)
+                .then((environmentFeatureStates) => {
+                    const multivariate_feature_state_values = environmentFeatureStates.multivariate_feature_state_values && environmentFeatureStates.multivariate_feature_state_values.map((v) => {
+                        const matching = flag.multivariate_options.find(m => m.id === v.multivariate_feature_option);
+                        if (!matching) { // multivariate is new, meaning the value is already correct from the default allocation
+                            return v;
+                        }
+                        // multivariate is existing, override the existing with the new value
+                        return { ...v, percentage_allocation: matching.default_percentage_allocation };
+                    });
+                    environmentFlag.multivariate_feature_state_values = multivariate_feature_state_values;
+                    return data.put(`${Project.api}environments/${environmentId}/featurestates/${environmentFlag.id}/`, Object.assign({}, environmentFlag, {
+                        feature_state_value: flag.initial_value,
+                        hide_from_client: flag.hide_from_client,
+                        enabled: flag.default_enabled,
+                    }));
+                });
         } else {
             prom = data.post(`${Project.api}environments/${environmentId}/featurestates/`, Object.assign({}, flag, {
                 enabled: false,
@@ -126,7 +152,7 @@ const controller = {
             }));
         }
 
-        const segmentOverridesRequest = segmentOverrides
+        const segmentOverridesRequest = mode === 'SEGMENT' && segmentOverrides
             ? data.post(`${Project.api}features/feature-segments/update-priorities/`, segmentOverrides.map((override, index) => ({
                 id: override.id,
                 priority: index,
@@ -154,6 +180,73 @@ const controller = {
             store.saved();
         });
     },
+    editFeatureStateChangeRequest: (projectId, environmentId, flag, projectFlag, environmentFlag, segmentOverrides, changeRequest, commit) => {
+        store.saving();
+        API.trackEvent(Constants.events.EDIT_FEATURE);
+
+        const prom = data.get(`${Project.api}environments/${environmentId}/featurestates/${environmentFlag.id}/`)
+            .then((environmentFeatureStates) => {
+                const multivariate_feature_state_values = environmentFeatureStates.multivariate_feature_state_values && environmentFeatureStates.multivariate_feature_state_values.map((v) => {
+                    const matching = flag.multivariate_options.find(m => m.id === v.multivariate_feature_option);
+                    if (!matching) { // multivariate is new, meaning the value is already correct from the default allocation
+                        return v;
+                    }
+                    // multivariate is existing, override the existing with the new value
+                    return { ...v, percentage_allocation: matching.default_percentage_allocation };
+                });
+                const { featureStateId, multivariate_options, ...changeRequestData } = changeRequest;
+                const req = {
+                    feature_states: [{
+                        id: featureStateId,
+                        feature: projectFlag.id,
+                        enabled: flag.default_enabled,
+                        feature_state_value: Utils.valueToFeatureState(flag.initial_value),
+                        live_from: changeRequest.live_from || new Date().toISOString(),
+                    }],
+                    ...changeRequestData,
+                };
+                const reqType = req.id ? 'put' : 'post';
+                const url = req.id ? `${Project.api}features/workflows/change-requests/${req.id}/` : `${Project.api}environments/${environmentId}/create-change-request/`;
+                return data[reqType](url, req).then((v) => {
+                    let prom = Promise.resolve();
+                    if (multivariate_options) {
+                        v.feature_states[0].multivariate_feature_state_values = v.feature_states[0].multivariate_feature_state_values.map(
+                            (v) => {
+                                const matching = multivariate_options.find(m => (v.multivariate_feature_option || v.id) === (m.multivariate_feature_option || m.id));
+                                return ({ ...v,
+                                    percentage_allocation: matching.percentage_allocation || matching.default_percentage_allocation,
+                                });
+                            },
+                        );
+                    }
+
+
+                    prom = data.put(`${Project.api}features/workflows/change-requests/${v.id}/`, {
+                        ...v,
+                    }).then(() => {
+                        if (commit) {
+                            AppActions.actionChangeRequest(v.id, 'commit', () => {
+                                AppActions.getFeatures(projectId, environmentId, true);
+                            });
+                        }
+                    });
+                    prom.then(() => {
+                        AppActions.getChangeRequests(environmentId);
+                        if (featureStateId) {
+                            AppActions.getChangeRequest(changeRequestData.id);
+                        }
+                    });
+                });
+            });
+
+
+        Promise.all([prom]).then(([res, segmentRes]) => {
+            store.saved();
+            if (typeof closeModal !== 'undefined') {
+                closeModal();
+            }
+        });
+    },
     removeFlag: (projectId, flag) => {
         store.saving();
         API.trackEvent(Constants.events.REMOVE_FEATURE);
@@ -176,8 +269,10 @@ const store = Object.assign({}, BaseStore, {
     getProjectFlags() {
         return store.model && store.model.features;
     },
-    hasFlagInEnvironment(id) {
-        return store.model && store.model.keyedEnvironmentFeatures && store.model.keyedEnvironmentFeatures.hasOwnProperty(id);
+    hasFlagInEnvironment(id, environmentFlags) {
+        const flags = environmentFlags || (store.model && store.model.keyedEnvironmentFeatures);
+
+        return flags && flags.hasOwnProperty(id);
     },
     getLastSaved() {
         return store.model && store.model.lastSaved;
@@ -196,7 +291,7 @@ store.dispatcherIndex = Dispatcher.register(store, (payload) => {
             controller.getFeatures(action.projectId, action.environmentId, action.force);
             break;
         case Actions.TOGGLE_FLAG:
-            controller.toggleFlag(action.index, action.environments, action.comment);
+            controller.toggleFlag(action.index, action.environments, action.comment, action.environmentFlags);
             break;
         case Actions.GET_FLAG_INFLUX_DATA:
             controller.getInfluxDate(action.projectId, action.environmentId, action.flag, action.period);
@@ -205,7 +300,10 @@ store.dispatcherIndex = Dispatcher.register(store, (payload) => {
             controller.createFlag(action.projectId, action.environmentId, action.flag, action.segmentOverrides);
             break;
         case Actions.EDIT_ENVIRONMENT_FLAG:
-            controller.editFeatureState(action.projectId, action.environmentId, action.flag, action.projectFlag, action.environmentFlag, action.segmentOverrides);
+            controller.editFeatureState(action.projectId, action.environmentId, action.flag, action.projectFlag, action.environmentFlag, action.segmentOverrides, action.mode);
+            break;
+        case Actions.EDIT_ENVIRONMENT_FLAG_CHANGE_REQUEST:
+            controller.editFeatureStateChangeRequest(action.projectId, action.environmentId, action.flag, action.projectFlag, action.environmentFlag, action.segmentOverrides, action.changeRequest, action.commit);
             break;
         case Actions.EDIT_FLAG:
             controller.editFlag(action.projectId, action.flag, action.onComplete);

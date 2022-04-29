@@ -8,11 +8,11 @@ const keywords = {
     USER_ID: 'user_123456',
     FEATURE_FUNCTION: 'myCoolFeature',
     SEGMENT_NAME: 'superUsers',
-    FEATURE_NAME: 'myCoolFeature',
+    FEATURE_NAME: 'my_cool_feature',
     TRAIT_NAME: 'age',
     USER_FEATURE_FUNCTION: 'myEvenCoolerFeature',
-    USER_FEATURE_NAME: 'myEvenCoolerFeature',
-    FEATURE_NAME_ALT: 'bannerSize',
+    USER_FEATURE_NAME: 'my_even_cooler_feature',
+    FEATURE_NAME_ALT: 'banner_size',
     FEATURE_NAME_ALT_VALUE: 'big',
 };
 
@@ -84,15 +84,15 @@ const Constants = {
         'VIEW_SEGMENT': { 'event': 'Segment viewed', 'category': 'Segment' },
         'UPDATE_USER_ROLE': { 'event': 'Updated user role', 'category': 'Organisation' },
         'GET_INFLUX_DATA': { 'event': 'Get Influx data', 'category': 'Organisation' },
-
     },
     modals: {
         'PAYMENT': 'Payment Modal',
     },
 
-    adminPermissions: () => 'To use this feature you need the to be admin of the organisation.<br/>Please contact member of this organisation who has administrator privileges.',
-    projectPermissions: perm => `To use this feature you need the <i>${perm}</i> permission for this project.<br/>Please contact member of this project who has administrator privileges.`,
-    environmentPermissions: perm => `To use this feature you need the <i>${perm}</i> permission for this environment.<br/>Please contact member of this environment who has administrator privileges.`,
+    adminPermissions: () => 'To use this feature you need the to be admin of the organisation.<br/>Please contact a member of this organisation who has administrator privileges.',
+    projectPermissions: perm => `To use this feature you need the <i>${perm}</i> permission for this project.<br/>Please contact a member of this project who has administrator privileges.`,
+    environmentPermissions: perm => `To use this feature you need the <i>${perm}</i> permission for this environment.<br/>Please contact a member of this environment who has administrator privileges.`,
+    organisationPermissions: perm => `To use this feature you need the <i>${perm}</i> permission for this organisation.<br/>Please contact a member of this organisation who has administrator privileges.`,
     pages: {
         'ACCOUNT': 'Account Page',
         'AUDIT_LOG': 'Audit Log Page',
@@ -116,16 +116,17 @@ const Constants = {
         'USERS': 'Users Page',
     },
     strings: {
+        TAGS_DESCRIPTION: 'Organise your flags with tags, tagging your features as "<strong>protected</strong>" will prevent them from accidentally being deleted.',
         HIDE_FROM_SDKS_DESCRIPTION: 'Enable this if you want to prevent the Flagsmith API from returning this feature regardless of if it is enabled. Use this if you don\'t want users to see that a feature name whilst it is in development.',
         SEGMENT_OVERRIDES_DESCRIPTION: 'Set different values for your feature based on what segments users are in.',
-        MULTIVARIATE_DESCRIPTION: 'Features by default have 1 value and enabled state. Adding variations (or multivariates)  lets you do % spit abn tests.<br/>Values for variations are set per projects but their % values are configured per environment, segment and identity.',
         ENVIRONMENT_OVERRIDE_DESCRIPTION: name => `Features are created once per project<br/>but their <strong>value</strong> and <strong>enabled state</strong> are set per environment.<br/>Saving this feature will override the <strong>${name}</strong> environment.`,
         IDENTITY_OVERRIDES_DESCRIPTION: 'See which identities have specific overridden values for this feature.<br/>Identity overrides take priority over segment overrides and environment values.',
-        REMOTE_CONFIG_DESCRIPTION: 'Features can have values as well as being simply on or off, E.g. a font size for a banner or an environment variable for a server.',
-        FEATURE_FLAG_DESCRIPTION: 'A feature that you can turn on or off per environment or user. E.g. instant messaging for a mobile app or an endpoint for an API.',
-        AUDIT_WEBHOOKS_DESCRIPTION: 'Receive a webhook for when an audit log is recieved.',
+        REMOTE_CONFIG_DESCRIPTION: 'Features can have values as well as being simply on or off, e.g. a font size for a banner or an environment variable for a server.',
+        REMOTE_CONFIG_DESCRIPTION_VARIATION: 'Features can have values as well as being simply on or off, e.g. a font size for a banner or an environment variable for a server.<br/>Variation values are set per project, the environment weight is per environment.',
+        FEATURE_FLAG_DESCRIPTION: 'A feature that you can turn on or off per environment or user, e.g. instant messaging for a mobile app or an endpoint for an API.',
+        AUDIT_WEBHOOKS_DESCRIPTION: 'Receive a webhook for when an audit log is received.',
         WEBHOOKS_DESCRIPTION: 'Receive a webhook for when feature values are changed.',
-        USER_PROPERTY_DESCRIPTION: 'The name of the user trait or custom property belonging to the user. E.g. firstName',
+        USER_PROPERTY_DESCRIPTION: 'The name of the user trait or custom property belonging to the user, e.g. firstName',
         ORGANISATION_DESCRIPTION: 'This is used to create a default organisation for team members to create and manage projects.',
         ENVIRONMENT_DESCRIPTION: 'Environments are versions of your projects, environments within a project all share the same features but can be individually turned on/off or have different values.',
     },
@@ -139,57 +140,45 @@ const Constants = {
 
         'CREATE_USER': (envId, userId) => ({
             '.NET': require('./code-help/create-user/create-user-dotnet')(envId, keywords),
+            'cURL': require('./code-help/create-user/create-user-curl')(envId, keywords, userId),
             'Flutter': require('./code-help/create-user/create-user-flutter')(envId, keywords),
             'Go': require('./code-help/create-user/create-user-go')(envId, keywords),
             'iOS': require('./code-help/create-user/create-user-ios')(envId, keywords),
             'Java': require('./code-help/create-user/create-user-java')(envId, keywords),
             'JavaScript': require('./code-help/create-user/create-user-js')(envId, keywords),
+            'Next.js': require('./code-help/create-user/create-user-next')(envId, keywords),
             'Node JS': require('./code-help/create-user/create-user-node')(envId, keywords),
             'PHP': require('./code-help/create-user/create-user-php')(envId, keywords),
             'Python': require('./code-help/create-user/create-user-python')(envId, keywords),
             'REST': require('./code-help/create-user/create-user-rest')(envId, keywords),
-            'React Native': require('./code-help/create-user/create-user-rn')(envId, keywords),
-            'Ruby': require('./code-help/create-user/create-user-ruby')(envId, keywords),
-            'Rust': require('./code-help/create-user/create-user-rust')(envId, keywords),
-        }),
-
-        'SEGMENTS': envId => ({
-            '.NET': require('./code-help/create-user/create-user-dotnet')(envId, keywords),
-            'Flutter': require('./code-help/create-user/create-user-flutter')(envId, keywords),
-            'Go': require('./code-help/create-user/create-user-go')(envId, keywords),
-            'iOS': require('./code-help/create-user/create-user-ios')(envId, keywords),
-            'Java': require('./code-help/create-user/create-user-java')(envId, keywords),
-            'JavaScript': require('./code-help/create-user/create-user-js')(envId, keywords),
-            'Node JS': require('./code-help/create-user/create-user-node')(envId, keywords),
-            'PHP': require('./code-help/create-user/create-user-php')(envId, keywords),
-            'Python': require('./code-help/create-user/create-user-python')(envId, keywords),
-            'REST': require('./code-help/create-user/create-user-rest')(envId, keywords),
+            'React': require('./code-help/create-user/create-user-react')(envId, keywords),
             'React Native': require('./code-help/create-user/create-user-rn')(envId, keywords),
             'Ruby': require('./code-help/create-user/create-user-ruby')(envId, keywords),
             'Rust': require('./code-help/create-user/create-user-rust')(envId, keywords),
         }),
 
         'USER_TRAITS': (envId, userId) => ({
-            'JavaScript': require('./code-help/traits/traits-js')(envId, keywords),
-            'React Native': require('./code-help/traits/traits-rn')(envId, keywords),
-            'Node JS': '//Coming Soon',
-            'Java': '//Coming Soon',
-            '.NET': '//Coming Soon',
-            'cURL': require('./code-help/traits/traits-curl')(envId, keywords),
+            'cURL': require('./code-help/traits/traits-curl')(envId, keywords, userId),
+            'JavaScript': require('./code-help/traits/traits-js')(envId, keywords, userId),
+            'Next.js': require('./code-help/traits/traits-next')(envId, keywords, userId),
+            'React Native': require('./code-help/traits/traits-rn')(envId, keywords, userId),
+            'React': require('./code-help/traits/traits-react')(envId, keywords, userId),
         }),
 
-        'INIT': (envId, flagName) => ({
+        'INIT': envId => ({
             '.NET': require('./code-help/init/init-dotnet')(envId, keywords),
             'Flutter': require('./code-help/init/init-flutter')(envId, keywords),
             'Go': require('./code-help/init/init-go')(envId, keywords),
             'iOS': require('./code-help/init/init-ios')(envId, keywords),
             'Java': require('./code-help/init/init-java')(envId, keywords),
             'JavaScript': require('./code-help/init/init-js')(envId, keywords),
+            'Next.js': require('./code-help/init/init-next')(envId, keywords),
             'Node JS': require('./code-help/init/init-node')(envId, keywords),
             'PHP': require('./code-help/init/init-php')(envId, keywords),
             'Python': require('./code-help/init/init-python')(envId, keywords),
             'REST': require('./code-help/init/init-rest')(envId, keywords),
             'React Native': require('./code-help/init/init-rn')(envId, keywords),
+            'React': require('./code-help/init/init-react')(envId, keywords),
             'Ruby': require('./code-help/init/init-ruby')(envId, keywords),
             'Rust': require('./code-help/init/init-rust')(envId, keywords),
         }),
@@ -198,16 +187,18 @@ const Constants = {
             '.NET': require('./code-help/install/install-dotnet')(keywords),
             'Flutter': require('./code-help/install/install-flutter')(keywords),
             'Go': require('./code-help/install/install-go')(keywords),
-            'iOS': require('./code-help/install/install-ios')(keywords),
             'Java': require('./code-help/install/install-java')(keywords),
             'JavaScript': require('./code-help/install/install-js')(keywords),
+            'Next.js': require('./code-help/install/install-js')(keywords),
             'Node JS': require('./code-help/install/install-node')(keywords),
             'PHP': require('./code-help/install/install-php')(keywords),
             'Python': require('./code-help/install/install-python')(keywords),
             'REST': require('./code-help/install/install-rest')(keywords),
             'React Native': require('./code-help/install/install-rn')(keywords),
+            'React': require('./code-help/install/install-js')(keywords),
             'Ruby': require('./code-help/install/install-ruby')(keywords),
             'Rust': require('./code-help/install/install-rust')(keywords),
+            'iOS': require('./code-help/install/install-ios')(keywords),
         },
     },
     simulate: {},
@@ -216,59 +207,78 @@ const Constants = {
         'USER': 'User',
     },
     exampleWebhook: `
- {
-  "data": {
-    "changed_by": "Some User",
-    "new_state": {
-      "enabled": true,
-      "environment": 23,
-      "feature": {
-        "created_date": "2020-02-25T22:11:16.355547Z",
-        "default_enabled": false,
-        "description": null,
-        "id": 2411,
-        "initial_value": "blue",
-        "name": "feature_name",
-        "project": 12,
-        "type": "FLAG|CONFIG"
-      },
-      "feature_segment": null,
-      "feature_state_value": null,
-      "id": 10430,
-      "identity": null,
-      "identity_identifier": null
+{
+ "data": {
+  "changed_by": "Ben Rometsch",
+  "new_state": {
+   "enabled": true,
+   "environment": {
+    "id": 23,
+    "name": "Development"
+   },
+   "feature": {
+    "created_date": "2021-02-10T20:03:43.348556Z",
+    "default_enabled": false,
+    "description": "Show html in a butter bar for certain users",
+    "id": 7168,
+    "initial_value": null,
+    "name": "butter_bar",
+    "project": {
+     "id": 12,
+     "name": "Flagsmith Website"
     },
-    "previous_state": {
-    "enabled": false,
-      "environment": 23,
-      "feature": {
-        "created_date": "2020-02-25T22:11:16.355547Z",
-        "default_enabled": false,
-        "description": null,
-        "id": 2411,
-        "initial_value": "red",
-        "name": "feature_name",
-        "project": 12,
-        "type": "FLAG|CONFIG"
-      },
-      "feature_segment": null,
-      "feature_state_value": null,
-      "id": 10430,
-      "identity": null,
-      "identity_identifier": null
-    },
-    "timestamp": "2020-03-07T13:59:07.040Z"
+    "type": "CONFIG"
+   },
+   "feature_segment": null,
+   "feature_state_value": "<strong>\\nYou are using the develop environment.\\n</strong>",
+   "identity": null,
+   "identity_identifier": null
   },
-  "event_type": "FLAG_UPDATED"
+  "previous_state": {
+   "enabled": false,
+   "environment": {
+    "id": 23,
+    "name": "Development"
+   },
+   "feature": {
+    "created_date": "2021-02-10T20:03:43.348556Z",
+    "default_enabled": false,
+    "description": "Show html in a butter bar for certain users",
+    "id": 7168,
+    "initial_value": null,
+    "name": "butter_bar",
+    "project": {
+     "id": 12,
+     "name": "Flagsmith Website"
+    },
+    "type": "CONFIG"
+   },
+   "feature_segment": null,
+   "feature_state_value": "<strong>\\nYou are using the develop environment.\\n</strong>",
+   "identity": null,
+   "identity_identifier": null
+  },
+  "timestamp": "2021-06-18T07:50:26.595298Z"
+ },
+ "event_type": "FLAG_UPDATED"
 }`,
     exampleAuditWebhook: `{
-  "created_date": "2020-02-23T17:30:57.006318Z",
-  "log": "New Flag / Remote Config created: my_feature",
-  "author": { "id": 3, "email": "user@domain.com", "first_name": "Kyle", "last_name": "Johnson" },
-  "environment": null,
-  "project": { "id": 6, "name": "Project name", "organisation": 1 },
-  "related_object_id": 6,
-  "related_object_type": "FEATURE"
+ "created_date": "2020-02-23T17:30:57.006318Z",
+ "log": "New Flag / Remote Config created: my_feature",
+ "author": {
+  "id": 3,
+  "email": "user@domain.com",
+  "first_name": "Kyle",
+  "last_name": "Johnson"
+ },
+ "environment": null,
+ "project": {
+  "id": 6,
+  "name": "Project name",
+  "organisation": 1
+ },
+ "related_object_id": 6,
+ "related_object_type": "FEATURE"
 }`,
 };
 module.exports = Constants;

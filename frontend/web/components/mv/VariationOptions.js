@@ -1,6 +1,8 @@
 import React from 'react';
 import Constants from '../../../common/constants';
 import VariationValue from './VariationValue';
+import ValueEditor from "../ValueEditor";
+import InfoMessage from "../InfoMessage";
 
 export default function VariationOptions({ multivariateOptions, select, controlValue, weightTitle, variationOverrides, removeVariation, updateVariation, setVariations, setValue }) {
     const invalid = multivariateOptions.length && controlValue < 0;
@@ -16,22 +18,19 @@ export default function VariationOptions({ multivariateOptions, select, controlV
                     Your variation percentage splits total to over 100%
                 </div>
             )}
-            <Tooltip
-              title={(
-                  <label>{select ? 'Value' : 'Variations'} <span className="icon ion-ios-information-circle"/></label>
-                )}
-              html
-              place="right"
-            >
-                {Constants.strings.MULTIVARIATE_DESCRIPTION}
-            </Tooltip>
+            <p>
+
+                <InfoMessage>
+                    Variation values are shared amongst environments. Variation weights are specific to this Environment. <a target={"_blank"} href="https://docs.flagsmith.com/basic-features/managing-features#multi-variate-flags">Check the Docs for more</a>
+                </InfoMessage>
+            </p>
             {select && (
                 <div className="panel panel--flat panel-without-heading mb-2">
                     <div className="panel-content">
                         <Row>
-                            <div className="flex flex-1 align-start">
-                                <FeatureValue value={Utils.getTypedValue(controlValue)}/>
-                            </div>
+                            <Flex>
+                                <ValueEditor value={Utils.getTypedValue(controlValue)}/>
+                            </Flex>
                             <div
                               onMouseDown={(e) => {
                                   e.stopPropagation();
@@ -45,28 +44,23 @@ export default function VariationOptions({ multivariateOptions, select, controlV
                 </div>
             )}
             {
-                multivariateOptions.map((m, i) => {
-                    const theValue = {
-                        ...m,
-                        ...(override ? { default_percentage_allocation: override.percentage_allocation } : {}),
-                    };
+                multivariateOptions.map((theValue, i) => {
                     let override = select
                         ? variationOverrides && variationOverrides[0] && typeof variationOverrides[0].multivariate_feature_option_index === 'number' ? i === variationOverrides[0].multivariate_feature_option_index
-&& variationOverrides[0] : variationOverrides && variationOverrides.find(v => v.multivariate_feature_option === m.id) : variationOverrides && variationOverrides.find(v => v.percentage_allocation === 100);
-                    override = override && override.percentage_allocation === 100;
+&& variationOverrides[0] : variationOverrides && variationOverrides.find(v => v.multivariate_feature_option === theValue.id) : variationOverrides && variationOverrides.find(v => v.percentage_allocation === 100);
                     return select ? (
                         <div className="panel panel--flat panel-without-heading mb-2">
                             <div className="panel-content">
                                 <Row>
-                                    <div className="flex flex-1 align-start">
-                                        <FeatureValue value={Utils.getTypedValue(Utils.featureStateToValue(theValue))}/>
-                                    </div>
+                                    <Flex>
+                                        <ValueEditor value={Utils.getTypedValue(Utils.featureStateToValue(theValue))}/>
+                                    </Flex>
                                     <div
                                       onMouseDown={(e) => {
                                           e.stopPropagation();
                                           e.preventDefault();
                                           setVariations([{
-                                              multivariate_feature_option: m.id,
+                                              multivariate_feature_option: theValue.id,
                                               multivariate_feature_option_index: i,
                                               percentage_allocation: 100,
                                           }]);
@@ -82,9 +76,6 @@ export default function VariationOptions({ multivariateOptions, select, controlV
                           key={i}
                           value={theValue}
                           onChange={(e) => {
-                              if (override) {
-                                  override.percentage_allocation = e.default_percentage_allocation;
-                              }
                               updateVariation(i, e, variationOverrides);
                           }}
                           weightTitle={weightTitle}

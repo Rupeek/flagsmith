@@ -2,7 +2,12 @@ import typing
 
 from django.db import models
 
-from features.value_types import INTEGER, STRING, BOOLEAN, FEATURE_STATE_VALUE_TYPES
+from features.value_types import (
+    BOOLEAN,
+    FEATURE_STATE_VALUE_TYPES,
+    INTEGER,
+    STRING,
+)
 
 
 class AbstractBaseFeatureValueModel(models.Model):
@@ -18,7 +23,7 @@ class AbstractBaseFeatureValueModel(models.Model):
     )
     boolean_value = models.NullBooleanField(null=True, blank=True)
     integer_value = models.IntegerField(null=True, blank=True)
-    string_value = models.CharField(null=True, max_length=2000, blank=True)
+    string_value = models.CharField(null=True, max_length=20000, blank=True)
 
     @property
     def value(self) -> typing.Union[str, int, bool]:

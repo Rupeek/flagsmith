@@ -27,7 +27,6 @@ a, .btn, button{
         &.btn-link {
             background: transparent;
         }
-        background: $button-bg-dark;
 
         &:hover, &:disabled:hover {
             background: $button-bg-dark-hover;
@@ -47,6 +46,11 @@ a, .btn, button{
 
             &:hover {
                 background-color: darken($body-bg-dark,2);
+            }
+
+            &-danger {
+                border-color: $alert-danger-bg !important;
+                color: $alert-danger-bg !important;
             }
         }
         &--with-icon {
@@ -70,8 +74,12 @@ a, .btn, button{
         &--link {
             color: $bt-link-color-dark;
             background-color: transparent;
-            &:hover, &:active  {
+            &:hover, &:active, &:focus  {
                 background-color: transparent;
+                color: $dark-highlight-color;
+            }
+            &-primary {
+                color: $bt-brand-primary;
             }
         }
         &__oauth {
@@ -129,6 +137,11 @@ a, .btn, button{
         &:hover {
             background-color: white;
         }
+
+        &-danger {
+            border-color: $alert-danger-bg !important;
+            color: $alert-danger-bg !important;
+        }
     }
 
     &--small {
@@ -167,6 +180,10 @@ a, .btn, button{
     }
 
     &--link {
+
+        &-primary {
+            color: $bt-brand-primary;
+        }
         vertical-align: baseline;
         font-family: $font-family;
         background: transparent;
@@ -287,6 +304,10 @@ a, .btn, button{
             &:hover {
                 background-color: lighten($google, 5);
             }
+        }
+        &--saml {
+            color: white !important;
+           padding-left: 20px
         }
         &--microsoft {
             background-color: #339af4;

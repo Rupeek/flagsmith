@@ -75,7 +75,7 @@ const InviteUsers = class extends Component {
                   }}
                   >
                       {_.map(invites, (invite, index) => (
-                        <Row key={index}>
+                        <Row className="mt-2" key={index}>
                             <Flex>
                                 <InputGroup
                                   ref={e => this.input = e}
@@ -90,7 +90,7 @@ const InviteUsers = class extends Component {
                                   placeholder="E-mail address"
                                 />
                             </Flex>
-                            <Flex style={{ top: 6, position: 'relative' }}>
+                            <Flex className="mb-4" style={{ position: 'relative' }}>
                                 <Select
                                   data-test="select-role"
                                   placeholder="Select a role"
@@ -138,7 +138,7 @@ const InviteUsers = class extends Component {
                       <p className="mt-3">
                           Users without administrator privileges will need to be invited to individual projects.
                           {' '}
-                          <ButtonLink target="_blank" href="https://docs.flagsmith.com/permissions/">Learn about User Roles.</ButtonLink>
+                          <ButtonLink target="_blank" href="https://docs.flagsmith.com/advanced-use/permissions">Learn about User Roles.</ButtonLink>
                       </p>
                       <div className="text-right mt-2">
                           {error && <Error error={error}/>}

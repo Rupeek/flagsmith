@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework import exceptions
 from rest_framework.permissions import BasePermission
 
@@ -22,34 +23,27 @@ class EnvironmentKeyPermissions(BasePermission):
 
 class EnvironmentPermissions(BasePermission):
     def has_permission(self, request, view):
-        try:
-            if view.action == "create":
+        if view.action == "create":
+            try:
                 project_id = request.data.get("project")
-                project = Project.objects.get(id=project_id)
+                project_lookup = Q(id=project_id)
+                project = Project.objects.get(project_lookup)
                 return request.user.has_project_permission(
                     "CREATE_ENVIRONMENT", project
                 )
+            except Project.DoesNotExist:
+                return False
 
-            # return true as all users can list and specific object permissions will be handled later
-            return True
-
-        except Project.DoesNotExist:
-            return False
+        # return true as all users can list and obj permissions will be handled later
+        return True
 
     def has_object_permission(self, request, view, obj):
-        if request.user.is_admin(obj.project.organisation):
-            return True
+        if view.action == "clone":
+            return request.user.is_project_admin(obj.project)
 
-        if request.user.is_environment_admin(obj):
-            return True
-
-        if request.user.is_project_admin(obj.project):
-            return True
-
-        if view.action == "user_permissions":
-            return True
-
-        return False
+        return request.user.is_environment_admin(obj) or view.action in [
+            "user_permissions"
+        ]
 
 
 class IdentityPermissions(BasePermission):
@@ -68,7 +62,7 @@ class IdentityPermissions(BasePermission):
             return False
 
     def has_object_permission(self, request, view, obj):
-        if request.user.is_admin(obj.environment.project.organisation):
+        if request.user.is_organisation_admin(obj.environment.project.organisation):
             return True
 
         if request.user.is_environment_admin(obj.environment):
@@ -85,7 +79,6 @@ class NestedEnvironmentPermissions(BasePermission):
                 return False
 
             environment = Environment.objects.get(api_key=environment_api_key)
-
             return request.user.is_environment_admin(environment)
 
         if view.action == "list":
@@ -112,3 +105,17 @@ class TraitPersistencePermissions(BasePermission):
     def has_object_permission(self, request, view, obj):
         # no views that use this permission currently have any detail endpoints
         return False
+
+
+class EnvironmentAdminPermission(BasePermission):
+    def has_permission(self, request, view):
+        try:
+            environment = Environment.objects.get(
+                api_key=view.kwargs.get("environment_api_key")
+            )
+            return request.user.is_environment_admin(environment)
+        except Environment.DoesNotExist:
+            return False
+
+    def has_object_permission(self, request, view, obj):
+        return request.user.is_environment_admin(obj.environment)

@@ -18,18 +18,36 @@ const FormGroup = class extends Component {
 
     render() {
         const { props } = this;
-        const id = Utils.GUID();
+        const id = this.props.id||Utils.GUID();
         const { inputProps } = this.props;
         return (
             <div className={`${this.props.className} form-group ${(this.props.isInvalid ? 'invalid' : '')}`}>
                 {this.props.tooltip ? (
                     <Tooltip
                       title={<label htmlFor={id} className="cols-sm-2 control-label">{props.title} <span className="icon ion-ios-information-circle"/></label>}
-                      place="right"
+                      place={this.props.tooltipPlace || "right"}
                     >
                         {this.props.tooltip}
                     </Tooltip>
-                ) : <label htmlFor={id} className="cols-sm-2 control-label">{props.title}</label>}
+                ) : (
+                    <Row>
+                        {!!props.title && (
+                        <Flex className="mr-4">
+                            <label htmlFor={id} className="cols-sm-2 control-label">{props.title}</label>
+                        </Flex>
+                        )}
+                        {!!this.props.rightComponent && (
+                            <div style={{
+                                marginBottom: '0.5rem',
+                            }}
+                            >
+                                {this.props.rightComponent}
+                            </div>
+                        )}
+
+                    </Row>
+
+                )}
 
                 {inputProps && inputProps.error && (
                     <span>
