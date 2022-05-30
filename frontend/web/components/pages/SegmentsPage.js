@@ -41,20 +41,20 @@ const SegmentsPage = class extends Component {
           flags={flags}
           environmentId={this.props.match.params.environmentId}
           projectId={this.props.match.params.projectId}
-        />, null, { className: 'alert fade expand create-segment-modal' });
+        />, null, { className: 'fade side-modal create-segment-modal' });
     };
 
 
     editSegment = (segment, readOnly) => {
         API.trackEvent(Constants.events.VIEW_SEGMENT);
-        openModal('Edit Segment', <CreateSegmentModal
+        openModal(`Edit Segment - ${segment.name}`, <CreateSegmentModal
           segment={segment}
           isEdit
           readOnly={readOnly}
           environmentId={this.props.match.params.environmentId}
           projectId={this.props.match.params.projectId}
           projectFlag={segment}
-        />, null, { className: 'alert fade expand create-segment-modal' });
+        />, null, { className: 'fade side-modal create-segment-modal' });
     };
 
 
@@ -104,6 +104,7 @@ const SegmentsPage = class extends Component {
 
     render() {
         const { projectId, environmentId } = this.props.match.params;
+        const hasNoOperators = !this.props.getValue('segment_operators');
         return (
             <div data-test="segments-page" id="segments-page" className="app-container container">
                 <Permission level="project" permission="ADMIN" id={projectId}>
@@ -122,13 +123,14 @@ const SegmentsPage = class extends Component {
                                                         <p>
                                                         Create and manage groups of users with similar traits. Segments can be used to override features within the features page for any environment.
                                                             {' '}
-                                                            <ButtonLink target="_blank" href="https://docs.flagsmith.com/permissions/">Learn about Segments.</ButtonLink>
+                                                            <ButtonLink target="_blank" href="https://docs.flagsmith.com/basic-features/managing-segments">Learn about Segments.</ButtonLink>
                                                         </p>
                                                     </Flex>
                                                     <FormGroup className="float-right">
                                                         <div className="text-right">
                                                             {permission ? (
                                                                 <Button
+                                                                  disabled={hasNoOperators}
                                                                   className="btn-lg btn-primary"
                                                                   id="show-create-segment-btn"
                                                                   data-test="show-create-segment-btn"
@@ -155,6 +157,13 @@ const SegmentsPage = class extends Component {
                                                         </div>
                                                     </FormGroup>
                                                 </Row>
+                                                {hasNoOperators && (
+                                                    <div className="mt-2">
+                                                        <p className="alert alert-info">
+                                                            In order to use segments, please set the segment_operators remote config value. <a target="_blank" href="https://docs.flagsmith.com/deployment/overview#running-flagsmith-on-flagsmith">Learn about self hosting</a>.
+                                                        </p>
+                                                    </div>
+                                                )}
 
                                                 <FormGroup>
                                                     <PanelSearch
@@ -185,8 +194,8 @@ const SegmentsPage = class extends Component {
                                                                       <button
                                                                         disabled={!permission}
                                                                         data-test={`remove-segment-btn-${i}`}
-                                                                        onClick={() => this.confirmRemove(segments[i], () => {
-                                                                            removeSegment(this.props.match.params.projectId, segments[i].id);
+                                                                        onClick={() => this.confirmRemove(_.find(segments, { id }), () => {
+                                                                            removeSegment(this.props.match.params.projectId, id);
                                                                         })}
                                                                         className="btn btn--with-icon"
                                                                       >
@@ -209,7 +218,7 @@ const SegmentsPage = class extends Component {
                                                 <FormGroup className="mt-4">
                                                     <CodeHelp
                                                       title="Using segments"
-                                                      snippets={Constants.codeHelp.SEGMENTS(environmentId)}
+                                                      snippets={Constants.codeHelp.USER_TRAITS(environmentId)}
                                                     />
                                                 </FormGroup>
                                             </div>
@@ -222,13 +231,13 @@ const SegmentsPage = class extends Component {
                                                         You can create a segment that targets
                                                             {' '}
                                                             <ButtonLink
-                                                              href="https://docs.flagsmith.com/managing-identities/#identity-traits"
-                                                              target="new"
+                                                              href="https://docs.flagsmith.com/basic-features/managing-identities#identity-traits"
+                                                              target="_blank"
                                                             >User Traits
                                                             </ButtonLink>
                                                         .
                                                         As user's traits are updated they will automatically be added to
-                                                        the segments based on the rules you create. <ButtonLink href="https://docs.flagsmith.com/managing-segments/">Check out the documentation on Segments</ButtonLink>.
+                                                        the segments based on the rules you create. <ButtonLink href="https://docs.flagsmith.com/basic-features/managing-segments" target="_blank">Check out the documentation on Segments</ButtonLink>.
                                                         </p>
                                                     </Panel>
                                                 </FormGroup>
@@ -253,7 +262,7 @@ const SegmentsPage = class extends Component {
                                     <FormGroup>
                                         <CodeHelp
                                           title="Managing user traits and segments"
-                                          snippets={Constants.codeHelp.USER_TRAITS(this.props.match.params.environmentId, this.props.match.params.id)}
+                                          snippets={Constants.codeHelp.USER_TRAITS(this.props.match.params.environmentId)}
                                         />
                                     </FormGroup>
                                 </div>
@@ -268,4 +277,4 @@ const SegmentsPage = class extends Component {
 
 SegmentsPage.propTypes = {};
 
-module.exports = SegmentsPage;
+module.exports = ConfigProvider(SegmentsPage);

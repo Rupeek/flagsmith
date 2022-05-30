@@ -1,17 +1,29 @@
-# -*- coding: utf-8 -*-
-import hashlib
-import re
+import logging
 import typing
 
+from core.constants import BOOLEAN, FLOAT, INTEGER
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.utils.encoding import python_2_unicode_compatible
 
-from environments.identities.helpers import get_hashed_percentage_for_object_ids
-from environments.identities.models import Identity
-from environments.identities.traits.models import Trait
-from environments.models import BOOLEAN, FLOAT, INTEGER
+from environments.identities.helpers import (
+    get_hashed_percentage_for_object_ids,
+)
 from projects.models import Project
+
+if typing.TYPE_CHECKING:
+    from environments.identities.models import Identity
+    from environments.identities.traits.models import Trait
+
+
+logger = logging.getLogger(__name__)
+
+try:
+    import re2 as re
+
+    logger.info("Using re2 library for regex.")
+except ImportError:
+    logger.warning("Unable to import re2. Falling back to re.")
+    import re
 
 # Condition Types
 EQUAL = "EQUAL"
@@ -26,7 +38,6 @@ REGEX = "REGEX"
 PERCENTAGE_SPLIT = "PERCENTAGE_SPLIT"
 
 
-@python_2_unicode_compatible
 class Segment(models.Model):
     name = models.CharField(max_length=2000)
     description = models.TextField(null=True, blank=True)
@@ -41,7 +52,7 @@ class Segment(models.Model):
         return "Segment - %s" % self.name
 
     def does_identity_match(
-        self, identity: Identity, traits: typing.List[Trait] = None
+        self, identity: "Identity", traits: typing.List["Trait"] = None
     ) -> bool:
         rules = self.rules.all()
         return rules.count() > 0 and all(
@@ -49,7 +60,6 @@ class Segment(models.Model):
         )
 
 
-@python_2_unicode_compatible
 class SegmentRule(models.Model):
     ALL_RULE = "ALL"
     ANY_RULE = "ANY"
@@ -82,7 +92,7 @@ class SegmentRule(models.Model):
         )
 
     def does_identity_match(
-        self, identity: Identity, traits: typing.List[Trait] = None
+        self, identity: "Identity", traits: typing.List["Trait"] = None
     ) -> bool:
         matches_conditions = False
         conditions = self.conditions.all()
@@ -122,7 +132,6 @@ class SegmentRule(models.Model):
         return rule.segment
 
 
-@python_2_unicode_compatible
 class Condition(models.Model):
     CONDITION_TYPES = (
         (EQUAL, "Exactly Matches"),
@@ -154,7 +163,7 @@ class Condition(models.Model):
         )
 
     def does_identity_match(
-        self, identity: Identity, traits: typing.List[Trait] = None
+        self, identity: "Identity", traits: typing.List["Trait"] = None
     ) -> bool:
         if self.operator == PERCENTAGE_SPLIT:
             return self._check_percentage_split_operator(identity)

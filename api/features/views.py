@@ -1,20 +1,31 @@
 import logging
+import typing
 
 import coreapi
 from app_analytics.influxdb_wrapper import get_multiple_event_list_for_feature
 from django.conf import settings
 from django.core.cache import caches
+from django.db.models import Q, QuerySet
 from django.utils.decorators import method_decorator
 from drf_yasg2 import openapi
 from drf_yasg2.utils import swagger_auto_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import (
+    NotFound,
+    PermissionDenied,
+    ValidationError,
+)
 from rest_framework.generics import GenericAPIView, get_object_or_404
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.schemas import AutoSchema
 
 from audit.models import (
+    FEATURE_CREATED_MESSAGE,
+    FEATURE_DELETED_MESSAGE,
+    FEATURE_UPDATED_MESSAGE,
     IDENTITY_FEATURE_STATE_DELETED_MESSAGE,
     AuditLog,
     RelatedObjectType,
@@ -22,16 +33,23 @@ from audit.models import (
 from environments.authentication import EnvironmentKeyAuthentication
 from environments.identities.models import Identity
 from environments.models import Environment
+from environments.permissions.constants import VIEW_ENVIRONMENT
 from environments.permissions.permissions import (
     EnvironmentKeyPermissions,
     NestedEnvironmentPermissions,
 )
+from webhooks.webhooks import WebhookEventType
 
 from .models import Feature, FeatureState
-from .permissions import FeaturePermissions, FeatureStatePermissions
+from .permissions import (
+    EnvironmentFeatureStatePermissions,
+    FeaturePermissions,
+    FeatureStatePermissions,
+    IdentityFeatureStatePermissions,
+)
 from .serializers import (
     FeatureInfluxDataSerializer,
-    FeatureSerializer,
+    FeatureOwnerInputSerializer,
     FeatureStateSerializerBasic,
     FeatureStateSerializerCreate,
     FeatureStateSerializerFull,
@@ -39,9 +57,11 @@ from .serializers import (
     FeatureStateValueSerializer,
     GetInfluxDataQuerySerializer,
     ListCreateFeatureSerializer,
+    ProjectFeatureSerializer,
     UpdateFeatureSerializer,
     WritableNestedFeatureStateSerializer,
 )
+from .tasks import trigger_feature_state_change_webhooks
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -51,6 +71,7 @@ flags_cache = caches[settings.FLAGS_CACHE_LOCATION]
 
 class FeatureViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, FeaturePermissions]
+    filterset_fields = ["is_archived"]
 
     def get_serializer_class(self):
         return {
@@ -58,18 +79,104 @@ class FeatureViewSet(viewsets.ModelViewSet):
             "create": ListCreateFeatureSerializer,
             "update": UpdateFeatureSerializer,
             "partial_update": UpdateFeatureSerializer,
-        }.get(self.action, FeatureSerializer)
+        }.get(self.action, ProjectFeatureSerializer)
+
+    @swagger_auto_schema(
+        request_body=FeatureOwnerInputSerializer,
+        responses={200: ProjectFeatureSerializer},
+    )
+    @action(detail=True, methods=["POST"], url_path="add-owners")
+    def add_owners(self, request, *args, **kwargs):
+        serializer = FeatureOwnerInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        feature = self.get_object()
+        serializer.add_owners(feature)
+        return Response(self.get_serializer(instance=feature).data)
+
+    @swagger_auto_schema(
+        request_body=FeatureOwnerInputSerializer,
+        responses={200: ProjectFeatureSerializer},
+    )
+    @action(detail=True, methods=["POST"], url_path="remove-owners")
+    def remove_owners(self, request, *args, **kwargs):
+        serializer = FeatureOwnerInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        feature = self.get_object()
+        serializer.remove_users(feature)
+
+        return Response(self.get_serializer(instance=feature).data)
 
     def get_queryset(self):
         user_projects = self.request.user.get_permitted_projects(["VIEW_PROJECT"])
         project = get_object_or_404(user_projects, pk=self.kwargs["project_pk"])
-        return project.features.all().prefetch_related("multivariate_options")
+        return project.features.all().prefetch_related(
+            "multivariate_options", "owners", "tags"
+        )
 
     def perform_create(self, serializer):
-        serializer.save(project_id=self.kwargs.get("project_pk"))
+        instance = serializer.save(
+            project_id=self.kwargs.get("project_pk"), user=self.request.user
+        )
+        feature_states = list(
+            instance.feature_states.filter(identity=None, feature_segment=None)
+        )
+        self._create_audit_log("CREATE", instance, feature_states)
 
     def perform_update(self, serializer):
-        serializer.save(project_id=self.kwargs.get("project_pk"))
+        instance = serializer.save(project_id=self.kwargs.get("project_pk"))
+        self._create_audit_log("UPDATE", instance)
+
+    def perform_destroy(self, instance):
+        feature_states = list(
+            instance.feature_states.filter(identity=None, feature_segment=None)
+        )
+        self._create_audit_log("DELETE", instance, feature_states)
+        self._trigger_feature_state_change_webhooks(feature_states)
+        instance.delete()
+
+    def _trigger_feature_state_change_webhooks(
+        self, feature_states: typing.List[FeatureState]
+    ):
+        for feature_state in feature_states:
+            trigger_feature_state_change_webhooks(
+                feature_state, WebhookEventType.FLAG_DELETED
+            )
+
+    def _create_audit_log(
+        self,
+        action_type: str,
+        feature: Feature,
+        feature_states: typing.List[FeatureState] = None,
+    ):
+        assert action_type in ("CREATE", "UPDATE", "DELETE")
+        feature_states = feature_states or []
+        message = {
+            "CREATE": FEATURE_CREATED_MESSAGE,
+            "UPDATE": FEATURE_UPDATED_MESSAGE,
+            "DELETE": FEATURE_DELETED_MESSAGE,
+        }.get(action_type) % feature.name
+        project_audit_log = AuditLog(
+            author=self.request.user,
+            project=feature.project,
+            related_object_type=RelatedObjectType.FEATURE.name,
+            related_object_id=feature.id,
+            log=message,
+        )
+        audit_logs = [project_audit_log]
+        for feature_state in feature_states:
+            audit_logs.append(
+                AuditLog(
+                    author=self.request.user,
+                    project=feature.project,
+                    environment=feature_state.environment,
+                    related_object_type=RelatedObjectType.FEATURE_STATE.name,
+                    related_object_id=feature_state.id,
+                    log=message,
+                )
+            )
+        AuditLog.objects.bulk_create(audit_logs)
 
     @swagger_auto_schema(
         query_serializer=GetInfluxDataQuerySerializer(),
@@ -111,7 +218,7 @@ class FeatureViewSet(viewsets.ModelViewSet):
         ]
     ),
 )
-class FeatureStateViewSet(viewsets.ModelViewSet):
+class BaseFeatureStateViewSet(viewsets.ModelViewSet):
     """
     View set to manage feature states. Nested beneath environments and environments + identities
     to allow for filtering on both.
@@ -133,28 +240,33 @@ class FeatureStateViewSet(viewsets.ModelViewSet):
         Override queryset to filter based on provided URL parameters.
         """
         environment_api_key = self.kwargs["environment_api_key"]
-        identity_pk = self.kwargs.get("identity_pk")
-        environment = get_object_or_404(
-            self.request.user.get_permitted_environments(["VIEW_ENVIRONMENT"]),
-            api_key=environment_api_key,
-        )
 
-        queryset = FeatureState.objects.filter(
-            environment=environment, feature_segment=None
-        )
+        try:
+            environment = Environment.objects.get(api_key=environment_api_key)
+            if not self.request.user.has_environment_permission(
+                VIEW_ENVIRONMENT, environment
+            ):
+                raise PermissionDenied()
 
-        if identity_pk:
-            queryset = queryset.filter(identity__pk=identity_pk)
-        elif "anyIdentity" in self.request.query_params:
-            queryset = queryset.exclude(identity=None)
-        else:
-            queryset = queryset.filter(identity=None, feature_segment=None)
+            queryset = FeatureState.get_environment_flags_queryset(
+                environment=environment
+            )
+            queryset = self._apply_query_param_filters(queryset)
 
+            if self.action == "list":
+                queryset = queryset.prefetch_related(
+                    "multivariate_feature_state_values"
+                )
+
+            return queryset.select_related("feature_state_value", "identity", "feature")
+        except Environment.DoesNotExist:
+            raise NotFound("Environment not found.")
+
+    def _apply_query_param_filters(self, queryset: QuerySet) -> QuerySet:
         if self.request.query_params.get("feature"):
             queryset = queryset.filter(
-                feature__id=int(self.request.query_params.get("feature"))
+                feature__id=int(self.request.query_params["feature"])
             )
-
         return queryset
 
     def get_environment_from_request(self):
@@ -260,7 +372,7 @@ class FeatureStateViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         feature_state = get_object_or_404(self.get_queryset(), pk=kwargs.get("pk"))
-        res = super(FeatureStateViewSet, self).destroy(request, *args, **kwargs)
+        res = super(BaseFeatureStateViewSet, self).destroy(request, *args, **kwargs)
         if res.status_code == status.HTTP_204_NO_CONTENT:
             self._create_deleted_feature_state_audit_log(feature_state)
         return res
@@ -311,29 +423,73 @@ class FeatureStateViewSet(viewsets.ModelViewSet):
         return feature_state_value
 
 
+class EnvironmentFeatureStateViewSet(BaseFeatureStateViewSet):
+    permission_classes = [IsAuthenticated, EnvironmentFeatureStatePermissions]
+
+    def get_queryset(self):
+        queryset = super().get_queryset().filter(feature_segment=None)
+        if "anyIdentity" in self.request.query_params:
+            # TODO: deprecate anyIdentity query parameter
+            return queryset.exclude(identity=None)
+        return queryset.filter(identity=None)
+
+    def get_serializer_class(self):
+        if self.action == "create_new_version":
+            return FeatureStateSerializerBasic
+        return super().get_serializer_class()
+
+
+class IdentityFeatureStateViewSet(BaseFeatureStateViewSet):
+    permission_classes = [IsAuthenticated, IdentityFeatureStatePermissions]
+
+    def get_queryset(self):
+        return super().get_queryset().filter(identity__pk=self.kwargs["identity_pk"])
+
+
 class SimpleFeatureStateViewSet(
     mixins.CreateModelMixin,
     mixins.UpdateModelMixin,
     mixins.ListModelMixin,
     viewsets.GenericViewSet,
 ):
-    queryset = FeatureState.objects.select_related("feature_state_value")
     serializer_class = WritableNestedFeatureStateSerializer
-    permission_classes = [FeatureStatePermissions]
+    permission_classes = [IsAuthenticated, FeatureStatePermissions]
     filterset_fields = ["environment", "feature", "feature_segment"]
 
     def get_queryset(self):
-        return self.queryset.filter(
-            environment__in=self.request.user.get_permitted_environments(
-                permissions=["VIEW_ENVIRONMENT"]
+        if not self.action == "list":
+            # permissions are handled in permission class
+            return FeatureState.objects.all()
+
+        try:
+            if not self.request.query_params.get("environment"):
+                raise ValidationError("'environment' GET parameter is required.")
+
+            environment = Environment.objects.get(
+                id=self.request.query_params["environment"]
             )
-        )
+            if not self.request.user.has_environment_permission(
+                VIEW_ENVIRONMENT, environment
+            ):
+                raise PermissionDenied(
+                    "User does not have permission to perform action in environment."
+                )
+
+            queryset = FeatureState.get_environment_flags_queryset(
+                environment=environment
+            )
+            return queryset.select_related("feature_state_value").prefetch_related(
+                "multivariate_feature_state_values"
+            )
+        except Environment.DoesNotExist:
+            raise NotFound("Environment not found.")
 
 
 class SDKFeatureStates(GenericAPIView):
     serializer_class = FeatureStateSerializerFull
     permission_classes = (EnvironmentKeyPermissions,)
     authentication_classes = (EnvironmentKeyAuthentication,)
+    renderer_classes = [JSONRenderer]
 
     schema = AutoSchema(
         manual_fields=[
@@ -358,51 +514,42 @@ class SDKFeatureStates(GenericAPIView):
         if identifier:
             return self._get_flags_response_with_identifier(request, identifier)
 
-        filter_args = {
-            "identity": None,
-            "environment": request.environment,
-            "feature_segment": None,
-        }
-
         if "feature" in request.GET:
-            filter_args["feature__name__iexact"] = request.GET["feature"]
-            try:
-                feature_state = FeatureState.objects.get(**filter_args)
-            except FeatureState.DoesNotExist:
+            feature_states = FeatureState.get_environment_flags_list(
+                environment=request.environment,
+                feature_name=request.GET["feature"],
+                additional_filters=Q(feature_segment=None, identity=None),
+            )
+            if len(feature_states) != 1:
+                # TODO: what if more than one?
                 return Response(
                     {"detail": "Given feature not found"},
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            return Response(self.get_serializer(feature_state).data)
+            return Response(self.get_serializer(feature_states[0]).data)
 
         if settings.CACHE_FLAGS_SECONDS > 0:
-            data = self._get_flags_from_cache(filter_args, request.environment)
+            data = self._get_flags_from_cache(request.environment)
         else:
             data = self.get_serializer(
-                # ignore disabled Flags when project hide_disabled_flags is enabled
-                FeatureState.objects.filter(**filter_args)
-                .exclude(
-                    feature__project__hide_disabled_flags=True,
-                    enabled=False,
-                )
-                .select_related("feature", "feature_state_value"),
+                FeatureState.get_environment_flags_list(
+                    environment=request.environment,
+                    additional_filters=Q(feature_segment=None, identity=None),
+                ),
                 many=True,
             ).data
 
         return Response(data)
 
-    def _get_flags_from_cache(self, filter_args, environment):
+    def _get_flags_from_cache(self, environment):
         data = flags_cache.get(environment.api_key)
         if not data:
             data = self.get_serializer(
-                # ignore disabled Flags when project hide_disabled_flags is enabled
-                FeatureState.objects.filter(**filter_args)
-                .exclude(
-                    feature__project__hide_disabled_flags=True,
-                    enabled=False,
-                )
-                .select_related("feature", "feature_state_value"),
+                FeatureState.get_environment_flags_list(
+                    environment=environment,
+                    additional_filters=Q(feature_segment=None, identity=None),
+                ),
                 many=True,
             ).data
             flags_cache.set(environment.api_key, data, settings.CACHE_FLAGS_SECONDS)

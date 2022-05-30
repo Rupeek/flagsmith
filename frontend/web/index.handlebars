@@ -6,27 +6,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <meta http-equiv="x-ua-compatible" content="ie=edge">
     <meta name="description" content="Manage your Feature Flags, Feature Toggles and Remote Config in your Mobile, React, React Native, Java, Javascript (Node) and Python projects." />
-    <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/9.8.0/highlight.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/json.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/java.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/ini.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/yaml.min.js"></script>
+    <script src="/static/javascript/highlight.min.js"></script>
     <script src="https://browser.sentry-cdn.com/4.3.0/bundle.min.js" crossorigin="anonymous"></script>
-    <script src="https://secure.aadcdn.microsoftonline-p.com/lib/1.0.0/js/msal.min.js"></script>
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.0.0/jquery.min.js" integrity="sha384-THPy051/pYDQGanwU6poAc/hOdQxjnOEXzbT+OuUAFqNqFjL+4IGLBgCJC3ZOShY"
+    <script src="/static/javascript/msal.min.js"></script>
+    <script src="/static/javascript/jquery.min.js" integrity="sha384-THPy051/pYDQGanwU6poAc/hOdQxjnOEXzbT+OuUAFqNqFjL+4IGLBgCJC3ZOShY"
             crossorigin="anonymous"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tether/1.2.0/js/tether.min.js" integrity="sha384-Plbmg8JY28KFelvJVai01l8WyZzrYWG825m+cZ0eDDS1f7d/js6ikvy1+X+guPIB"
+    <script src="/static/javascript/tether.min.js" integrity="sha384-Plbmg8JY28KFelvJVai01l8WyZzrYWG825m+cZ0eDDS1f7d/js6ikvy1+X+guPIB"
             crossorigin="anonymous"></script>
+    <script src="//cdn.headwayapp.co/widget.js"></script>
     <!--Project.js overrides-->
-    <script src="/static/project-overrides.js"></script>
+    <script src="/config/project-overrides"></script>
     <style>
         @font-face {
             font-family: 'OpenSans';
                 src: local('OpenSans'),
-                url('/fonts/OpenSans-Regular.ttf') format('ttf'),
-                url('/fonts/OpenSans-Regular.woff2') format('woff2'),
-                url('/fonts/OpenSans-Regular.woff') format('woff');
+                url('/static/fonts/OpenSans-Regular.ttf') format('ttf'),
+                url('/static/fonts/OpenSans-Regular.woff2') format('woff2'),
+                url('/static/fonts/OpenSans-Regular.woff') format('woff');
             font-weight: normal;
             font-display:swap;
         }
@@ -34,8 +30,8 @@
         @font-face {
             font-family: 'OpenSans';
             src: local('OpenSans'),
-                url('/fonts/OpenSans-Regular.woff2') format('woff2'),
-                url('/fonts/OpenSans-Regular.woff') format('woff');
+                url('/static/fonts/OpenSans-Regular.woff2') format('woff2'),
+                url('/static/fonts/OpenSans-Regular.woff') format('woff');
             font-weight: 400;
             font-display:swap;
         }
@@ -43,8 +39,8 @@
         @font-face {
             font-family: 'OpenSans';
             src: local('OpenSans'),
-                url('/fonts/OpenSans-Light.woff2') format('woff2'),
-                url('/fonts/OpenSans-Light.woff') format('woff');
+                url('/static/fonts/OpenSans-Light.woff2') format('woff2'),
+                url('/static/fonts/OpenSans-Light.woff') format('woff');
             font-weight: 300;
             font-display:swap;
         }
@@ -52,9 +48,9 @@
         @font-face {
             font-family: 'OpenSans';
             src: local('OpenSans'),
-                url('/fonts/OpenSans-Light.ttf') format('ttf'),
-                url('/fonts/OpenSans-Light.woff2') format('woff2'),
-                url('/fonts/OpenSans-Light.woff') format('woff');
+                url('/static/fonts/OpenSans-Light.ttf') format('ttf'),
+                url('/static/fonts/OpenSans-Light.woff2') format('woff2'),
+                url('/static/fonts/OpenSans-Light.woff') format('woff');
             font-weight: 100;
             font-display:swap;
         }
@@ -62,9 +58,9 @@
         @font-face {
             font-family: 'OpenSans';
             src: local('OpenSans'),
-                url('/fonts/OpenSans-Light.ttf') format('ttf'),
-                url('/fonts/OpenSans-Light.woff2') format('woff2'),
-                url('/fonts/OpenSans-Light.woff') format('woff');
+                url('/static/fonts/OpenSans-Light.ttf') format('ttf'),
+                url('/static/fonts/OpenSans-Light.woff2') format('woff2'),
+                url('/static/fonts/OpenSans-Light.woff') format('woff');
             font-weight: 200;
             font-display:swap;
         }
@@ -72,9 +68,9 @@
         @font-face {
             font-family: 'OpenSans';
             src: local('OpenSans'),
-                url('/fonts/OpenSans-Light.ttf') format('ttf'),
-                url('/fonts/OpenSans-Light.woff2') format('woff2'),
-                url('/fonts/OpenSans-Light.woff') format('woff');
+                url('/static/fonts/OpenSans-Light.ttf') format('ttf'),
+                url('/static/fonts/OpenSans-Light.woff2') format('woff2'),
+                url('/static/fonts/OpenSans-Light.woff') format('woff');
             font-weight:bold;
             font-display:swap;
         }
@@ -83,9 +79,9 @@
         @font-face {
             font-family: 'OpenSans';
             src: local('OpenSans'),
-                url('/fonts/OpenSans-Bold.ttf') format('ttf'),
-                url('/fonts/OpenSans-Bold.woff2') format('woff2'),
-                url('/fonts/OpenSans-Bold.woff') format('woff');
+                url('/static/fonts/OpenSans-Bold.ttf') format('ttf'),
+                url('/static/fonts/OpenSans-Bold.woff2') format('woff2'),
+                url('/static/fonts/OpenSans-Bold.woff') format('woff');
             font-weight:bold;
             font-display:swap;
         }
@@ -93,9 +89,9 @@
         @font-face {
             font-family: 'OpenSans';
             src: local('OpenSans'),
-                url('/fonts/OpenSans-SemiBold.ttf') format('ttf'),
-                url('/fonts/OpenSans-SemiBold.woff2') format('woff2'),
-                url('/fonts/OpenSans-SemiBold.woff') format('woff');
+                url('/static/fonts/OpenSans-SemiBold.ttf') format('ttf'),
+                url('/static/fonts/OpenSans-SemiBold.woff2') format('woff2'),
+                url('/static/fonts/OpenSans-SemiBold.woff') format('woff');
             font-weight:500;
             font-display:swap;
         }
@@ -103,18 +99,16 @@
         @font-face {
             font-family: 'OpenSans';
             src: local('OpenSans'),
-                url('/fonts/OpenSans-Bold.ttf') format('ttf'),
-                url('/fonts/OpenSans-Bold.woff2') format('woff2'),
-                url('/fonts/OpenSans-Bold.woff') format('woff');
+                url('/static/fonts/OpenSans-Bold.ttf') format('ttf'),
+                url('/static/fonts/OpenSans-Bold.woff2') format('woff2'),
+                url('/static/fonts/OpenSans-Bold.woff') format('woff');
             font-weight:600;
             font-display:swap;
         }
     </style>
-    <link href="https://fonts.googleapis.com/css?family=Raleway:300,400,500,700,800,900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css?family=Roboto:300,400&display=swap" rel="stylesheet">
 
     <title>Flagsmith - Feature Flags, Feature Toggles and Remote Config - Ship features with confidence</title>
-    <link rel="shortcut icon" href="/images/favicon.ico">
+    <link rel="shortcut icon" href="/static/images/favicon.ico">
 
 </head>
 
@@ -122,6 +116,7 @@
 <div id="app"></div>
 <div id="toast"></div>
 <div id="modal"></div>
+<div id="modal2"></div>
 <div id="confirm"></div>
 {{#if isDev}}
     <!--This is inserted by webpack in production-->

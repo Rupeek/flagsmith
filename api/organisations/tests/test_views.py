@@ -12,12 +12,20 @@ from rest_framework import status
 from rest_framework.test import APIClient, override_settings
 
 from environments.models import Environment
+from environments.permissions.models import UserEnvironmentPermission
 from features.models import Feature, FeatureSegment
 from organisations.invites.models import Invite
-from organisations.models import Organisation, OrganisationRole, Subscription
-from projects.models import Project
+from organisations.models import (
+    Organisation,
+    OrganisationRole,
+    OrganisationWebhook,
+    Subscription,
+)
+from organisations.permissions.models import UserOrganisationPermission
+from organisations.permissions.permissions import CREATE_PROJECT
+from projects.models import Project, UserProjectPermission
 from segments.models import Segment
-from users.models import FFAdminUser
+from users.models import FFAdminUser, UserPermissionGroup
 from util.tests import Helper
 
 User = get_user_model()
@@ -50,8 +58,12 @@ class OrganisationTestCase(TestCase):
         org_data = response_json["results"][0]
         assert "persist_trait_data" in org_data
 
-    def test_should_create_new_organisation(self):
+    def test_non_superuser_can_create_new_organisation_by_default(self):
         # Given
+        user = User.objects.create(email="test@example.com")
+        client = APIClient()
+        client.force_authenticate(user=user)
+
         org_name = "Test create org"
         webhook_notification_email = "test@email.com"
         url = reverse("api-v1:organisations:organisation-list")
@@ -61,7 +73,7 @@ class OrganisationTestCase(TestCase):
         }
 
         # When
-        response = self.client.post(url, data=data)
+        response = client.post(url, data=data)
 
         # Then
         assert response.status_code == status.HTTP_201_CREATED
@@ -70,7 +82,29 @@ class OrganisationTestCase(TestCase):
             == webhook_notification_email
         )
 
-    def test_should_update_organisation_name(self):
+    @override_settings(RESTRICT_ORG_CREATE_TO_SUPERUSERS=True)
+    def test_create_new_orgnisation_returns_403_with_non_superuser(self):
+        # Given
+        user = User.objects.create(email="test@example.com")
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        org_name = "Test create org"
+        url = reverse("api-v1:organisations:organisation-list")
+        data = {
+            "name": org_name,
+        }
+
+        # When
+        response = client.post(url, data=data)
+        # Then
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert (
+            "You do not have permission to perform this action."
+            == response.json()["detail"]
+        )
+
+    def test_should_update_organisation_data(self):
         # Given
         original_organisation_name = "test org"
         new_organisation_name = "new test org"
@@ -79,7 +113,7 @@ class OrganisationTestCase(TestCase):
         url = reverse(
             "api-v1:organisations:organisation-detail", args=[organisation.pk]
         )
-        data = {"name": new_organisation_name}
+        data = {"name": new_organisation_name, "restrict_project_create_to_admin": True}
 
         # When
         response = self.client.put(url, data=data)
@@ -88,6 +122,7 @@ class OrganisationTestCase(TestCase):
         organisation.refresh_from_db()
         assert response.status_code == status.HTTP_200_OK
         assert organisation.name == new_organisation_name
+        assert organisation.restrict_project_create_to_admin
 
     @override_settings()
     def test_should_invite_users(self):
@@ -154,7 +189,7 @@ class OrganisationTestCase(TestCase):
             frontend_base_url="https://www.example.com",
             organisation=organisation,
         )
-        invite_2 = Invite.objects.create(
+        Invite.objects.create(
             email="test_2@example.com",
             frontend_base_url="https://www.example.com",
             organisation=organisation,
@@ -173,14 +208,18 @@ class OrganisationTestCase(TestCase):
         assert invite_list_response.status_code == status.HTTP_200_OK
         assert invite_resend_response.status_code == status.HTTP_200_OK
 
-    def test_can_remove_a_user_from_an_organisation(self):
+    def test_remove_user_from_an_organisation_also_removes_from_group(self):
         # Given
         organisation = Organisation.objects.create(name="Test org")
+        group = UserPermissionGroup.objects.create(
+            name="Test Group", organisation=organisation
+        )
         self.user.add_organisation(organisation, OrganisationRole.ADMIN)
-
         user_2 = FFAdminUser.objects.create(email="test@example.com")
         user_2.add_organisation(organisation)
-
+        # Add users to the group
+        group.users.add(user_2)
+        group.users.add(self.user)
         url = reverse(
             "api-v1:organisations:organisation-remove-users", args=[organisation.pk]
         )
@@ -195,6 +234,56 @@ class OrganisationTestCase(TestCase):
         # Then
         assert res.status_code == status.HTTP_200_OK
         assert organisation not in user_2.organisations.all()
+        assert group not in user_2.permission_groups.all()
+        # Test that other users are still part of the group
+        assert group in self.user.permission_groups.all()
+
+    def test_remove_user_from_an_organisation_also_removes_users_environment_and_project_permission(
+        self,
+    ):
+        # Given
+        organisation = Organisation.objects.create(name="Test org")
+
+        self.user.add_organisation(organisation, OrganisationRole.ADMIN)
+        # Now, let's create a project
+        project_name = "org_remove_test"
+        project_create_url = reverse("api-v1:projects:project-list")
+        data = {"name": project_name, "organisation": organisation.id}
+
+        response = self.client.post(project_create_url, data=data)
+        project_id = response.json()["id"]
+
+        # Next, let's create an environment
+        url = reverse("api-v1:environments:environment-list")
+        data = {"name": "Test environment", "project": project_id}
+        response = self.client.post(url, data=data)
+        environment_id = response.json()["id"]
+
+        url = reverse(
+            "api-v1:organisations:organisation-remove-users", args=[organisation.pk]
+        )
+
+        data = [{"id": self.user.id}]
+
+        # Next, let's remove the user from the organisation
+        res = self.client.post(
+            url, data=json.dumps(data), content_type="application/json"
+        )
+
+        # Then
+        assert res.status_code == status.HTTP_200_OK
+        assert (
+            UserProjectPermission.objects.filter(
+                project__id=project_id, user=self.user
+            ).count()
+            == 0
+        )
+        assert (
+            UserEnvironmentPermission.objects.filter(
+                user=self.user, environment__id=environment_id
+            ).count()
+            == 0
+        )
 
     @override_settings()
     def test_can_invite_user_as_admin(self):
@@ -255,6 +344,7 @@ class OrganisationTestCase(TestCase):
     def test_user_can_get_projects_for_an_organisation(self):
         # Given
         organisation = Organisation.objects.create(name="Test org")
+
         self.user.add_organisation(organisation, OrganisationRole.USER)
         url = reverse(
             "api-v1:organisations:organisation-projects", args=[organisation.pk]
@@ -282,7 +372,8 @@ class OrganisationTestCase(TestCase):
             f'|> filter(fn:(r) => r._measurement == "api_call")         '
             f'|> filter(fn: (r) => r["_field"] == "request_count")         '
             f'|> filter(fn: (r) => r["organisation_id"] == "{organisation.id}") '
-            f'|> drop(columns: ["organisation", "project", "project_id"])'
+            f'|> drop(columns: ["organisation", "project", "project_id", '
+            f'"environment", "environment_id"])'
             f"|> sum()"
         )
 
@@ -327,6 +418,11 @@ class OrganisationTestCase(TestCase):
 
         # Then
         assert res.status_code == status.HTTP_200_OK
+        # Since subscription is created using organisation.id rather than
+        # organisation and we already have evaluated subscription(by add_organisation)
+        # attribute of organisation(before we created the subscription) we need to
+        # refresh organisation for `has_subscription` to work properly
+        organisation.refresh_from_db()
 
         # and
         mock_get_subscription_data.assert_called_with(hosted_page_id=hosted_page_id)
@@ -361,6 +457,95 @@ class OrganisationTestCase(TestCase):
 
         # THEN
         assert response.status_code == status.HTTP_204_NO_CONTENT
+
+    @mock.patch(
+        "organisations.serializers.get_hosted_page_url_for_subscription_upgrade"
+    )
+    def test_get_hosted_page_url_for_subscription_upgrade(
+        self, mock_get_hosted_page_url
+    ):
+        # Given
+        organisation = Organisation.objects.create(name="Test organisation")
+        self.user.add_organisation(organisation, OrganisationRole.ADMIN)
+
+        subscription = Subscription.objects.create(
+            subscription_id="sub-id", organisation=organisation
+        )
+
+        url = reverse(
+            "api-v1:organisations:organisation-get-hosted-page-url-for-subscription-upgrade",
+            args=[organisation.id],
+        )
+
+        expected_url = "https://some.url.com/hosted/page"
+        mock_get_hosted_page_url.return_value = expected_url
+
+        plan_id = "plan-id"
+
+        # When
+        response = self.client.post(
+            url, data=json.dumps({"plan_id": plan_id}), content_type="application/json"
+        )
+
+        # Then
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["url"] == expected_url
+        mock_get_hosted_page_url.assert_called_once_with(
+            subscription_id=subscription.subscription_id, plan_id=plan_id
+        )
+
+    def test_get_permissions(self):
+        # Given
+        url = reverse("api-v1:organisations:organisation-permissions")
+
+        # When
+        response = self.client.get(url)
+
+        # Then
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.json()) == 1
+
+    def test_get_my_permissions_for_non_admin(self):
+        # Given
+        organisation = Organisation.objects.create(name="Test org")
+        self.user.add_organisation(organisation)
+        user_permission = UserOrganisationPermission.objects.create(
+            user=self.user, organisation=organisation
+        )
+        user_permission.add_permission(CREATE_PROJECT)
+
+        url = reverse(
+            "api-v1:organisations:organisation-my-permissions", args=[organisation.id]
+        )
+
+        # When
+        response = self.client.get(url)
+
+        # Then
+        assert response.status_code == status.HTTP_200_OK
+
+        response_json = response.json()
+        assert response_json["permissions"] == [CREATE_PROJECT]
+        assert response_json["admin"] is False
+
+    def test_get_my_permissions_for_admin(self):
+        # Given
+        organisation = Organisation.objects.create(name="Test org")
+        self.user.add_organisation(organisation, OrganisationRole.ADMIN)
+
+        url = reverse(
+            "api-v1:organisations:organisation-my-permissions", args=[organisation.id]
+        )
+
+        # When
+        response = self.client.get(url)
+
+        # Then
+        assert response.status_code == status.HTTP_200_OK
+
+        response_json = response.json()
+        assert response_json["permissions"] == []
+        assert response_json["admin"] is True
 
 
 @pytest.mark.django_db
@@ -531,11 +716,12 @@ class OrganisationWebhookViewSetTestCase(TestCase):
             "api-v1:organisations:organisation-webhooks-list",
             args=[self.organisation.id],
         )
+        self.valid_webhook_url = "http://my.webhook.com/webhooks"
 
     def test_user_can_create_new_webhook(self):
         # Given
         data = {
-            "url": "https://test.com/my-webhook",
+            "url": self.valid_webhook_url,
         }
 
         # When
@@ -543,3 +729,50 @@ class OrganisationWebhookViewSetTestCase(TestCase):
 
         # Then
         assert response.status_code == status.HTTP_201_CREATED
+
+    def test_can_update_secret(self):
+        # Given
+        webhook = OrganisationWebhook.objects.create(
+            url=self.valid_webhook_url, organisation=self.organisation
+        )
+        url = reverse(
+            "api-v1:organisations:organisation-webhooks-detail",
+            args=[self.organisation.id, webhook.id],
+        )
+        data = {
+            "secret": "random_key",
+        }
+        # When
+        res = self.client.patch(
+            url, data=json.dumps(data), content_type="application/json"
+        )
+        # Then
+        assert res.status_code == status.HTTP_200_OK
+        assert res.json()["secret"] == data["secret"]
+
+        # and
+        webhook.refresh_from_db()
+        assert webhook.secret == data["secret"]
+
+    @mock.patch("webhooks.mixins.trigger_sample_webhook")
+    def test_trigger_sample_webhook_calls_trigger_sample_webhook_method_with_correct_arguments(
+        self, trigger_sample_webhook
+    ):
+        # Given
+        mocked_response = mock.MagicMock(status_code=200)
+        trigger_sample_webhook.return_value = mocked_response
+
+        url = reverse(
+            "api-v1:organisations:organisation-webhooks-trigger-sample-webhook",
+            args=[self.organisation.id],
+        )
+        data = {"url": self.valid_webhook_url}
+
+        # When
+        response = self.client.post(url, data)
+
+        # Then
+        assert response.json()["message"] == "Request returned 200"
+        assert response.status_code == status.HTTP_200_OK
+        args, _ = trigger_sample_webhook.call_args
+        assert args[0].url == self.valid_webhook_url

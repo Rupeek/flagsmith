@@ -7,10 +7,18 @@ const controller = {
     getIdentities: (envId, page, pageSize) => {
         store.loading();
         store.envId = envId;
-        const endpoint = (page && `${page}${store.search ? `&q=${store.search}&page_size=${pageSize || PAGE_SIZE}` : `&page_size=${pageSize || PAGE_SIZE}`}`) || `${Project.api}environments/${envId}/identities/${store.search ? `?q=${store.search}&page_size=${pageSize || PAGE_SIZE}` : `?page_size=${pageSize || PAGE_SIZE}`}`;
+        const endpoint = (page && `${page}${store.search ? `&q=${store.search}&page_size=${pageSize || PAGE_SIZE}` : `&page_size=${pageSize || PAGE_SIZE}`}`) || `${Project.api}environments/${envId}/${Utils.getIdentitiesEndpoint()}/${store.search ? `?q=${store.search}&page_size=${pageSize || PAGE_SIZE}` : `?page_size=${pageSize || PAGE_SIZE}`}`;
         data.get(endpoint)
             .then((res) => {
-                store.model = res && res.results;
+                store.model = res && res.results && res.results.map((v)=>{
+                    if (v.id) {
+                        return v
+                    }
+                    return {
+                        ...v,
+                        id: v.identity_uuid
+                    }
+                });
                 store.paging.next = res.next;
                 store.paging.count = res.count;
                 store.paging.previous = res.previous;
@@ -32,7 +40,7 @@ const controller = {
     }, 1000),
     deleteIdentity: (envId, id) => {
         store.saving();
-        data.delete(`${Project.api}environments/${envId}/identities/${id}/`)
+        data.delete(`${Project.api}environments/${envId}/${Utils.getIdentitiesEndpoint()}/${id}/`)
             .then(() => {
                 const index = _.findIndex(store.model, identity => identity.id === id);
                 if (index !== -1) {

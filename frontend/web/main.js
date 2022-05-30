@@ -16,6 +16,7 @@ window.Utils = require('../common/utils/utils');
 window.Constants = require('../common/constants');
 
 window.openModal = require('./project/modals').openModal;
+window.openModal2 = require('./project/modals').openModal2;
 window.openConfirm = require('./project/modals').openConfirm;
 
 const rootElement = document.getElementById('app');
@@ -74,6 +75,7 @@ setTimeout(() => {
       || document.location.pathname.indexOf('/invite') !== -1
       || document.location.pathname.indexOf('/projects') !== -1)
     && !AccountStore.getUser()) {
+        API.setRedirect(document.location.pathname + (document.location.search || ''))
         browserHistory.push(`/?redirect=${encodeURIComponent(document.location.pathname + (document.location.search || ''))}`);
     }
 

@@ -1,3 +1,5 @@
+const React = require('react');
+const ProjectStore = require('../../common/stores/project-store')
 module.exports = Object.assign({}, require('./base/_utils'), {
     numberWithCommas(x) {
         return x.toString()
@@ -10,6 +12,63 @@ module.exports = Object.assign({}, require('./base/_utils'), {
         p.appendChild(text);
         return p.innerHTML;
     },
+
+    getManageFeaturePermission() {
+        if (flagsmith.hasFeature('update_feature_state_permission')) {
+            return 'UPDATE_FEATURE_STATE';
+        }
+        return 'ADMIN';
+    },
+
+    getIdentitiesEndpoint() {
+      if (flagsmith.hasFeature("edge_identities") && ProjectStore.model && ProjectStore.model.use_edge_identities) {
+          return "edge-identities"
+      }
+      return "identities"
+    },
+
+    getSDKEndpoint() {
+      if (flagsmith.hasFeature("edge_identities") && ProjectStore.model && ProjectStore.model.use_edge_identities) {
+          return Project.flagsmithClientEdgeAPI
+      }
+      return Project.api
+    },
+
+    showUserSegments() {
+      if (flagsmith.hasFeature("edge_identities") && ProjectStore.model && ProjectStore.model.use_edge_identities) {
+          return false
+      }
+      return true
+    },
+
+    getFeatureStatesEndpoint() {
+      if (flagsmith.hasFeature("edge_identities") && ProjectStore.model && ProjectStore.model.use_edge_identities) {
+          return "edge-featurestates"
+      }
+      return "featurestates"
+    },
+
+    getManageFeaturePermissionDescription() {
+        if (flagsmith.hasFeature('update_feature_state_permission')) {
+            return 'Update Feature State';
+        }
+        return 'Admin';
+    },
+
+
+    renderWithPermission(permission, name, el) {
+        return permission ? (
+            el
+        ) : (
+            <Tooltip
+              title={<div>{el}</div>}
+              place="right"
+              html
+            >{name}
+            </Tooltip>
+        );
+    },
+
 
     calculateControl(multivariateOptions, variations) {
         if (!multivariateOptions || !multivariateOptions.length) {
@@ -28,7 +87,7 @@ module.exports = Object.assign({}, require('./base/_utils'), {
             return null;
         }
 
-        return Utils.getTypedValue(featureState.boolean_value || featureState.integer_value || featureState.string_value);
+        return Utils.getTypedValue(featureState.integer_value || featureState.string_value || featureState.boolean_value);
     },
     valueToFeatureState(value) {
         const val = Utils.getTypedValue(value);
@@ -58,7 +117,7 @@ module.exports = Object.assign({}, require('./base/_utils'), {
             string_value: val || '',
         };
     },
-    getFlagValue(projectFlag, environmentFlag, identityFlag) {
+    getFlagValue(projectFlag, environmentFlag, identityFlag, multivariate_options) {
         if (!environmentFlag) {
             return {
                 name: projectFlag.name,
@@ -69,6 +128,7 @@ module.exports = Object.assign({}, require('./base/_utils'), {
                 enabled: false,
                 hide_from_client: false,
                 description: projectFlag.description,
+                is_archived: projectFlag.is_archived,
             };
         }
         if (identityFlag) {
@@ -80,6 +140,7 @@ module.exports = Object.assign({}, require('./base/_utils'), {
                 hide_from_client: environmentFlag.hide_from_client,
                 enabled: identityFlag.enabled,
                 description: projectFlag.description,
+                is_archived: projectFlag.is_archived,
             };
         }
         return {
@@ -88,23 +149,39 @@ module.exports = Object.assign({}, require('./base/_utils'), {
             tags: projectFlag.tags,
             hide_from_client: environmentFlag.hide_from_client,
             feature_state_value: environmentFlag.feature_state_value,
-            multivariate_options: projectFlag.multivariate_options,
+            multivariate_options: projectFlag.multivariate_options.map((v)=>{
+                const matching = multivariate_options && multivariate_options.find((m)=>v.id === m.multivariate_feature_option)
+                return {
+                    ...v,
+                    default_percentage_allocation: matching? matching.percentage_allocation : v.default_percentage_allocation
+                }
+            }),
             enabled: environmentFlag.enabled,
             description: projectFlag.description,
+            is_archived: projectFlag.is_archived,
         };
     },
 
-    getTypedValue(str) {
+    getTypedValue(str, boolToString) {
+        if (typeof str === 'undefined') {
+            return '';
+        }
         if (typeof str !== 'string') {
             return str;
         }
 
         const isNum = /^\d+$/.test(str);
+        if (isNum && parseInt(str) > Number.MAX_SAFE_INTEGER) {
+            return `${str}`;
+        }
+
 
         if (str == 'true') {
+            if (boolToString) return 'true';
             return true;
         }
         if (str == 'false') {
+            if (boolToString) return 'false';
             return false;
         }
 
@@ -144,6 +221,11 @@ module.exports = Object.assign({}, require('./base/_utils'), {
         );
         return !!found;
     },
+    appendImage: (src) => {
+        const img = document.createElement('img');
+        img.src = src;
+        document.body.appendChild(img);
+    },
     getPlanPermission: (plan, permission) => {
         let valid = true;
         if (!plan) {
@@ -155,17 +237,31 @@ module.exports = Object.assign({}, require('./base/_utils'), {
             .valueOf() < cutOff.valueOf()) {
             return true;
         }
+        const isSideProjectOrGreater = !plan.includes('side-project');
+        const isScaleupOrGreater = !plan.includes('side-project') && !plan.includes('startup');
         switch (permission) {
+            case 'FLAG_OWNERS': {
+                valid = true;
+                break;
+            }
             case '2FA': {
-                valid = !plan.includes('side-project');
+                valid = isSideProjectOrGreater
                 break;
             }
             case 'RBAC': {
-                valid = !plan.includes('side-project');
+                valid = isSideProjectOrGreater
                 break;
             }
             case 'AUDIT': {
-                valid = !plan.includes('side-project') && !plan.includes('startup');
+                valid = isScaleupOrGreater
+                break;
+            }
+            case 'FORCE_2FA': {
+                valid = isScaleupOrGreater
+                break;
+            }
+            case '4_EYES': {
+                valid = isScaleupOrGreater
                 break;
             }
             default:
@@ -183,12 +279,12 @@ module.exports = Object.assign({}, require('./base/_utils'), {
             case 'startup':
             case 'startup-annual':
             case 'startup-v2':
-            case 'startup-v2-annual':
+            case 'startup-annual-v2':
                 return 'Startup';
             case 'scale-up':
             case 'scale-up-annual':
             case 'scale-up-v2':
-            case 'scale-up-v2-annual':
+            case 'scale-up-annual-v2':
                 return 'Scale-Up';
             case 'enterprise':
             case 'enterprise-annual':

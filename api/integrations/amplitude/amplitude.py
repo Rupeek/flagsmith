@@ -1,11 +1,14 @@
 import json
 import logging
-import urllib.parse
+import typing
 
 import requests
 
+from environments.identities.models import Identity
+from features.models import FeatureState
 from integrations.common.wrapper import AbstractBaseIdentityIntegrationWrapper
-from util.util import postpone
+
+from .models import AmplitudeConfiguration
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +16,8 @@ AMPLITUDE_API_URL = "https://api.amplitude.com"
 
 
 class AmplitudeWrapper(AbstractBaseIdentityIntegrationWrapper):
-    def __init__(self, api_key: str):
-        self.api_key = api_key
+    def __init__(self, config: AmplitudeConfiguration):
+        self.api_key = config.api_key
         self.url = f"{AMPLITUDE_API_URL}/identify"
 
     def _identify_user(self, user_data: dict) -> None:
@@ -25,16 +28,18 @@ class AmplitudeWrapper(AbstractBaseIdentityIntegrationWrapper):
             "Sent event to Amplitude. Response code was: %s" % response.status_code
         )
 
-    def generate_user_data(self, user_id, feature_states):
+    def generate_user_data(
+        self, identity: Identity, feature_states: typing.List[FeatureState]
+    ) -> dict:
         feature_properties = {}
 
         for feature_state in feature_states:
-            value = feature_state.get_feature_state_value()
+            value = feature_state.get_feature_state_value(identity=identity)
             feature_properties[feature_state.feature.name] = (
                 value if (feature_state.enabled and value) else feature_state.enabled
             )
 
         return {
-            "user_id": user_id,
+            "user_id": identity.identifier,
             "user_properties": feature_properties,
         }

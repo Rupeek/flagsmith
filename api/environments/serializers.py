@@ -6,7 +6,7 @@ from audit.models import (
     AuditLog,
     RelatedObjectType,
 )
-from environments.models import Environment, Webhook
+from environments.models import Environment, EnvironmentAPIKey, Webhook
 from features.serializers import FeatureStateSerializerFull
 from projects.serializers import ProjectSerializer
 
@@ -17,13 +17,26 @@ class EnvironmentSerializerFull(serializers.ModelSerializer):
 
     class Meta:
         model = Environment
-        fields = ("id", "name", "feature_states", "project", "api_key")
+        fields = (
+            "id",
+            "name",
+            "feature_states",
+            "project",
+            "api_key",
+            "minimum_change_request_approvals",
+        )
 
 
 class EnvironmentSerializerLight(serializers.ModelSerializer):
     class Meta:
         model = Environment
-        fields = ("id", "name", "api_key", "project")
+        fields = (
+            "id",
+            "name",
+            "api_key",
+            "project",
+            "minimum_change_request_approvals",
+        )
 
     def create(self, validated_data):
         instance = super(EnvironmentSerializerLight, self).create(validated_data)
@@ -52,8 +65,29 @@ class EnvironmentSerializerLight(serializers.ModelSerializer):
         )
 
 
+class CloneEnvironmentSerializer(EnvironmentSerializerLight):
+    class Meta:
+        model = Environment
+        fields = ("id", "name", "api_key", "project")
+        read_only_fields = ("id", "api_key", "project")
+
+    def create(self, validated_data):
+        name = validated_data.get("name")
+        source_env = validated_data.get("source_env")
+        clone = source_env.clone(name)
+        self._create_audit_log(clone, True)
+        return clone
+
+
 class WebhookSerializer(serializers.ModelSerializer):
     class Meta:
         model = Webhook
-        fields = ("id", "url", "enabled", "created_at", "updated_at")
+        fields = ("id", "url", "enabled", "created_at", "updated_at", "secret")
         read_only_fields = ("id", "created_at", "updated_at")
+
+
+class EnvironmentAPIKeySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EnvironmentAPIKey
+        fields = ("id", "key", "active", "created_at", "name", "expires_at")
+        read_only_fields = ("id", "created_at")

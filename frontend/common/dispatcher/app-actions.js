@@ -17,7 +17,7 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
             actionType: Actions.GET_FLAGS,
             projectId,
             environmentId,
-            force
+            force,
         });
     },
     createProject(name) {
@@ -126,11 +126,12 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
             ...data,
         });
     },
-    createEnv(name, projectId) {
+    createEnv(name, projectId, cloneId) {
         Dispatcher.handleViewAction({
             actionType: Actions.CREATE_ENV,
             name,
             projectId,
+            cloneId,
         });
     },
     editEnv(env) {
@@ -169,7 +170,7 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
             segmentOverrides,
         });
     },
-    editEnvironmentFlag(projectId, environmentId, flag, projectFlag, environmentFlag, segmentOverrides) {
+    editEnvironmentFlag(projectId, environmentId, flag, projectFlag, environmentFlag, segmentOverrides, mode) {
         Dispatcher.handleViewAction({
             actionType: Actions.EDIT_ENVIRONMENT_FLAG,
             projectId,
@@ -178,15 +179,29 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
             projectFlag,
             environmentFlag,
             segmentOverrides,
+            mode,
+        });
+    },
+    editEnvironmentFlagChangeRequest(projectId, environmentId, flag, projectFlag, environmentFlag, segmentOverrides, changeRequest, commit) {
+        Dispatcher.handleViewAction({
+            actionType: Actions.EDIT_ENVIRONMENT_FLAG_CHANGE_REQUEST,
+            projectId,
+            environmentId,
+            flag,
+            projectFlag,
+            environmentFlag,
+            changeRequest,
+            segmentOverrides,
+            commit,
         });
     },
 
-    editFlag(projectId, flag,onComplete) {
+    editFlag(projectId, flag, onComplete) {
         Dispatcher.handleViewAction({
             actionType: Actions.EDIT_FLAG,
             projectId,
             flag,
-            onComplete
+            onComplete,
         });
     },
     editProject(id, project) {
@@ -222,12 +237,13 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
             name,
         });
     },
-    toggleFlag(index, environments, comment) {
+    toggleFlag(index, environments, comment, environmentFlags) {
         Dispatcher.handleViewAction({
             actionType: Actions.TOGGLE_FLAG,
             index,
             environments,
             comment,
+            environmentFlags,
         });
     },
     editUserFlag(params) {
@@ -417,21 +433,28 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
             pageSize,
         });
     },
-    getAuditLog() {
+    getAuditLog(projectId, search, environmentId) {
         Dispatcher.handleViewAction({
             actionType: Actions.GET_AUDIT_LOG,
+            projectId,
+            environmentId,
+            search,
         });
     },
-    getAuditLogPage(page) {
+    getAuditLogPage(projectId, page, environmentId) {
         Dispatcher.handleViewAction({
+            projectId,
             actionType: Actions.GET_AUDIT_LOG_PAGE,
             page,
+            environmentId
         });
     },
-    searchAuditLog(search) {
+    searchAuditLog(search,projectId,environmentId) {
         Dispatcher.handleViewAction({
             actionType: Actions.SEARCH_AUDIT_LOG,
+            projectId,
             search,
+            environmentId
         });
     },
     deleteIdentity(envId, id) {
@@ -466,6 +489,41 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
         Dispatcher.handleViewAction({
             actionType: Actions.GET_INFLUX_DATA,
             id: organisationId,
+        });
+    },
+    getChangeRequests(environment, committed) {
+        Dispatcher.handleViewAction({
+            actionType: Actions.GET_CHANGE_REQUESTS,
+            environment,
+            committed,
+        });
+    },
+    getChangeRequest(id) {
+        Dispatcher.handleViewAction({
+            actionType: Actions.GET_CHANGE_REQUEST,
+            id,
+        });
+    },
+    updateChangeRequest(changeRequest) {
+        Dispatcher.handleViewAction({
+            actionType: Actions.UPDATE_CHANGE_REQUEST,
+            changeRequest,
+        });
+    },
+
+    deleteChangeRequest(id,cb) {
+        Dispatcher.handleViewAction({
+            actionType: Actions.DELETE_CHANGE_REQUEST,
+            id,
+            cb
+        });
+    },
+    actionChangeRequest(id, action, cb) {
+        Dispatcher.handleViewAction({
+            actionType: Actions.ACTION_CHANGE_REQUEST,
+            id,
+            action,
+            cb
         });
     },
 });
